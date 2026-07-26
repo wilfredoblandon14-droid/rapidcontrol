@@ -18,7 +18,7 @@ type Pedido = {
   motorizados:
     | {
         nombre: string;
-      }
+      }[]
     | null;
 };
 
@@ -105,6 +105,7 @@ export default function ListaPedidos() {
         <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm text-slate-400">Gestión de pedidos</p>
+
             <h1 className="text-3xl font-black md:text-4xl">
               📦 Pedidos
             </h1>
@@ -141,7 +142,10 @@ export default function ListaPedidos() {
 
         {!cargando && !error && pedidos.length === 0 && (
           <div className="rounded-2xl border border-slate-800 bg-slate-900 p-10 text-center">
-            <p className="text-xl font-bold">Todavía no hay pedidos</p>
+            <p className="text-xl font-bold">
+              Todavía no hay pedidos
+            </p>
+
             <p className="mt-2 text-slate-400">
               Registra el primer pedido para verlo aquí.
             </p>
@@ -200,13 +204,15 @@ export default function ListaPedidos() {
                           <p className="truncate">
                             {pedido.direccion_recogida}
                           </p>
+
                           <p className="mt-1 truncate text-slate-500">
                             → {pedido.direccion_entrega}
                           </p>
                         </td>
 
                         <td className="px-5 py-4 text-slate-300">
-                          {pedido.motorizados?.nombre ?? "Sin asignar"}
+                          {pedido.motorizados?.[0]?.nombre ??
+                            "Sin asignar"}
                         </td>
 
                         <td className="px-5 py-4 text-slate-300">
@@ -224,7 +230,9 @@ export default function ListaPedidos() {
                         </td>
 
                         <td className="px-5 py-4">
-                          {formatearDinero(Number(pedido.costo_envio))}
+                          {formatearDinero(
+                            Number(pedido.costo_envio)
+                          )}
                         </td>
 
                         <td className="px-5 py-4 font-bold">
