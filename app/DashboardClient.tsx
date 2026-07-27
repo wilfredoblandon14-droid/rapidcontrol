@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
-import { createClient } from "@/lib/supabase/client";
 
 type EstadoPedido =
   | "Pendiente"
@@ -120,7 +119,7 @@ function esDeHoy(fecha: string) {
 }
 
 export default function Home() {
-  const auth = useMemo(() => createClient(), []);
+  
 
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [motorizados, setMotorizados] = useState<Motorizado[]>([]);
@@ -133,7 +132,7 @@ export default function Home() {
 
   useEffect(() => {
     async function cargarUsuario() {
-      const { data, error: errorUsuario } = await auth.auth.getUser();
+      const { data, error: errorUsuario } = await supabase.auth.getUser();
 
       if (errorUsuario) {
         console.error(errorUsuario);
@@ -144,13 +143,13 @@ export default function Home() {
     }
 
     void cargarUsuario();
-  }, [auth]);
+}, []);
 
   async function cerrarSesion() {
     setCerrandoSesion(true);
     setError("");
 
-    const { error: errorCerrarSesion } = await auth.auth.signOut();
+    const { error: errorCerrarSesion } = await supabase.auth.signOut();
 
     if (errorCerrarSesion) {
       console.error(errorCerrarSesion);
