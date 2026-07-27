@@ -1,0 +1,93 @@
+"use client";
+
+import { usePathname } from "next/navigation";
+
+type HeaderProps = {
+  titulo?: string;
+  subtitulo?: string;
+  nombreUsuario?: string | null;
+  correoUsuario?: string | null;
+};
+
+const nombresRuta: Record<string, string> = {
+  "/": "Dashboard",
+  "/pedidos": "Pedidos",
+  "/pedidos/nuevo": "Nuevo pedido",
+  "/clientes": "Clientes",
+  "/motorizados": "Motorizados",
+  "/motorizado": "Panel del motorizado",
+  "/caja": "Caja",
+  "/reportes": "Reportes",
+};
+
+function obtenerTituloRuta(pathname: string) {
+  if (nombresRuta[pathname]) {
+    return nombresRuta[pathname];
+  }
+
+  if (pathname.startsWith("/pedidos/")) {
+    return "Pedidos";
+  }
+
+  if (pathname.startsWith("/clientes/")) {
+    return "Clientes";
+  }
+
+  if (pathname.startsWith("/motorizados/")) {
+    return "Motorizados";
+  }
+
+  return "RapidControl";
+}
+
+export default function Header({
+  titulo,
+  subtitulo,
+  nombreUsuario,
+  correoUsuario,
+}: HeaderProps) {
+  const pathname = usePathname();
+
+  const tituloFinal = titulo || obtenerTituloRuta(pathname);
+
+  return (
+    <header className="border-b border-slate-800 bg-slate-950/90 px-5 py-4 text-white backdrop-blur md:px-8">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="pl-14 lg:pl-0">
+          <p className="text-xs font-bold uppercase tracking-[0.2em] text-green-400">
+            RapidControl
+          </p>
+
+          <h1 className="mt-1 text-2xl font-black md:text-3xl">
+            {tituloFinal}
+          </h1>
+
+          {subtitulo && (
+            <p className="mt-1 text-sm text-slate-400">
+              {subtitulo}
+            </p>
+          )}
+        </div>
+
+        <div className="flex items-center gap-3 self-end sm:self-auto">
+          <div className="hidden text-right sm:block">
+            <p className="text-sm font-bold text-white">
+              {nombreUsuario || "Administrador"}
+            </p>
+
+            <p className="max-w-56 truncate text-xs text-slate-400">
+              {correoUsuario || "Sesión iniciada"}
+            </p>
+          </div>
+
+          <div className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-700 bg-slate-900 font-black text-green-400">
+            {(nombreUsuario || correoUsuario || "A")
+              .trim()
+              .charAt(0)
+              .toUpperCase()}
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}
