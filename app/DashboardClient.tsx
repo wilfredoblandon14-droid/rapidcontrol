@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
-import { supabase } from "../lib/supabase";
+import { createClient } from "@/lib/supabase/client";
 
 type EstadoPedido =
   | "Pendiente"
@@ -118,8 +118,8 @@ function esDeHoy(fecha: string) {
   );
 }
 
-export default function Home() {
-  
+export default function DashboardClient() {
+  const supabase = useMemo(() => createClient(), []);
 
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [motorizados, setMotorizados] = useState<Motorizado[]>([]);
@@ -143,7 +143,7 @@ export default function Home() {
     }
 
     void cargarUsuario();
-}, []);
+  }, [supabase]);
 
   async function cerrarSesion() {
     setCerrandoSesion(true);
@@ -240,7 +240,7 @@ export default function Home() {
     }
 
     void cargarDashboard();
-  }, []);
+  }, [supabase]);
 
   const datosDashboard = useMemo(() => {
     const pedidosHoy = pedidos.filter((pedido) =>
