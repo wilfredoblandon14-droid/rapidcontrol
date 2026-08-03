@@ -1,0 +1,4 @@
+"use client";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+export default function SinAcceso(){const router=useRouter();async function salir(){await createClient().auth.signOut();router.replace("/login");router.refresh();}return <main className="flex min-h-screen items-center justify-center bg-slate-950 p-6 text-white"><div className="max-w-lg rounded-3xl border border-amber-500/30 bg-slate-900 p-8 text-center"><div className="text-5xl">🔒</div><h1 className="mt-4 text-3xl font-black">Acceso no configurado</h1><p className="mt-3 text-slate-400">Tu cuenta no tiene un perfil válido o el usuario motorizado no está vinculado a un registro de motorizados. Contacta al administrador.</p><button onClick={()=>void salir()} className="mt-6 rounded-xl bg-green-600 px-6 py-3 font-bold">Volver al login</button></div></main>}

@@ -1,0 +1,31 @@
+"use client";
+
+import Link from "next/link";
+import { FormEvent, useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { supabase } from "../../../../lib/supabase";
+
+const campo = "w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-white outline-none focus:border-green-500 focus:ring-2 focus:ring-green-500/20";
+const estados = ["Pendiente", "Asignado", "Recogido", "En camino", "Entregado", "Cancelado"];
+
+type Motorizado = { id:number; nombre:string };
+type Form = { nombre_cliente:string; telefono:string; tipo_servicio:string; metodo_pago:string; direccion_recogida:string; direccion_entrega:string; costo_envio:string; monto_compra:string; estado:string; descripcion:string; observaciones:string; motorizado_id:string };
+
+export default function EditarPedido(){
+ const params=useParams<{id:string}>(); const router=useRouter(); const id=Number(params.id);
+ const [form,setForm]=useState<Form>({nombre_cliente:"",telefono:"",tipo_servicio:"Solo envío",metodo_pago:"Efectivo",direccion_recogida:"",direccion_entrega:"",costo_envio:"0",monto_compra:"0",estado:"Pendiente",descripcion:"",observaciones:"",motorizado_id:""});
+ const [motos,setMotos]=useState<Motorizado[]>([]); const [cargando,setCargando]=useState(true); const [guardando,setGuardando]=useState(false); const [error,setError]=useState("");
+ useEffect(()=>{async function cargar(){const [p,m]=await Promise.all([supabase.from("pedidos").select("nombre_cliente,telefono,tipo_servicio,metodo_pago,direccion_recogida,direccion_entrega,costo_envio,monto_compra,estado,descripcion,observaciones,motorizado_id").eq("id",id).single(),supabase.from("motorizados").select("id,nombre").order("nombre")]); if(p.error)setError(p.error.message); else if(p.data)setForm({nombre_cliente:p.data.nombre_cliente??"",telefono:p.data.telefono??"",tipo_servicio:p.data.tipo_servicio??"Solo envío",metodo_pago:p.data.metodo_pago??"Efectivo",direccion_recogida:p.data.direccion_recogida??"",direccion_entrega:p.data.direccion_entrega??"",costo_envio:String(p.data.costo_envio??0),monto_compra:String(p.data.monto_compra??0),estado:p.data.estado??"Pendiente",descripcion:p.data.descripcion??"",observaciones:p.data.observaciones??"",motorizado_id:p.data.motorizado_id?String(p.data.motorizado_id):""}); if(m.error)setError(m.error.message); else setMotos((m.data??[]) as Motorizado[]); setCargando(false)} if(Number.isFinite(id))void cargar()},[id]);
+ async function guardar(e:FormEvent){e.preventDefault();setGuardando(true);setError("");const {error}=await supabase.from("pedidos").update({...form,costo_envio:Number(form.costo_envio)||0,monto_compra:Number(form.monto_compra)||0,motorizado_id:form.motorizado_id?Number(form.motorizado_id):null,descripcion:form.descripcion.trim()||null,observaciones:form.observaciones.trim()||null}).eq("id",id);if(error){setError(error.message);setGuardando(false);return}router.push("/pedidos");router.refresh()}
+ const set=(k:keyof Form,v:string)=>setForm(f=>({...f,[k]:v}));
+ return <main className="min-h-screen bg-slate-950 p-5 text-white md:p-8"><div className="mx-auto max-w-5xl"><header className="mb-8 flex items-center justify-between gap-4"><div><p className="text-sm text-slate-400">Gestión de pedidos</p><h1 className="text-3xl font-black">Editar pedido #{id}</h1></div><Link href="/pedidos" className="rounded-xl border border-slate-700 px-5 py-3 font-semibold">← Volver</Link></header>{cargando?<div className="rounded-2xl bg-slate-900 p-8">Cargando...</div>:<form onSubmit={guardar} className="grid gap-5 rounded-2xl border border-slate-800 bg-slate-900 p-6 md:grid-cols-2 md:p-8">{error&&<div className="md:col-span-2 rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-300">{error}</div>}
+ {([['nombre_cliente','Cliente'],['telefono','Teléfono'],['direccion_recogida','Dirección de recogida'],['direccion_entrega','Dirección de entrega']] as [keyof Form,string][]).map(([k,l])=><label key={k}><span className="mb-2 block font-semibold">{l}</span><input required className={campo} value={form[k]} onChange={e=>set(k,e.target.value)}/></label>)}
+ <label><span className="mb-2 block font-semibold">Tipo de servicio</span><select className={campo} value={form.tipo_servicio} onChange={e=>set('tipo_servicio',e.target.value)}><option>Solo envío</option><option>Compra y envío</option><option>Mandado</option></select></label>
+ <label><span className="mb-2 block font-semibold">Método de pago</span><select className={campo} value={form.metodo_pago} onChange={e=>set('metodo_pago',e.target.value)}><option>Efectivo</option><option>Transferencia</option><option>Tarjeta</option></select></label>
+ <label><span className="mb-2 block font-semibold">Costo de envío</span><input type="number" min="0" step="0.01" className={campo} value={form.costo_envio} onChange={e=>set('costo_envio',e.target.value)}/></label>
+ <label><span className="mb-2 block font-semibold">Monto de compra</span><input type="number" min="0" step="0.01" className={campo} value={form.monto_compra} onChange={e=>set('monto_compra',e.target.value)}/></label>
+ <label><span className="mb-2 block font-semibold">Estado</span><select className={campo} value={form.estado} onChange={e=>set('estado',e.target.value)}>{estados.map(x=><option key={x}>{x}</option>)}</select></label>
+ <label><span className="mb-2 block font-semibold">Motorizado</span><select className={campo} value={form.motorizado_id} onChange={e=>set('motorizado_id',e.target.value)}><option value="">Sin asignar</option>{motos.map(m=><option key={m.id} value={m.id}>{m.nombre}</option>)}</select></label>
+ <label className="md:col-span-2"><span className="mb-2 block font-semibold">Descripción</span><textarea rows={3} className={campo} value={form.descripcion} onChange={e=>set('descripcion',e.target.value)}/></label><label className="md:col-span-2"><span className="mb-2 block font-semibold">Observaciones</span><textarea rows={3} className={campo} value={form.observaciones} onChange={e=>set('observaciones',e.target.value)}/></label>
+ <button disabled={guardando} className="md:col-span-2 rounded-xl bg-green-600 px-5 py-3 font-bold hover:bg-green-500 disabled:opacity-60">{guardando?'Guardando...':'Guardar cambios'}</button></form>}</div></main>
+}
