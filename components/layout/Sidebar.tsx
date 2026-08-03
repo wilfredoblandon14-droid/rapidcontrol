@@ -22,14 +22,17 @@ type OpcionMenu = {
 };
 
 const administrativos: RolUsuario[] = ["administrador", "despachador"];
+
 const opcionesMenu: OpcionMenu[] = [
-  { nombre: "Dashboard", href: "/", icono: "🏠", roles: administrativos },
+  { nombre: "Dashboard", href: "/", icono: "🏠", roles: ["administrador"] },
+  { nombre: "Operaciones", href: "/operaciones", icono: "🧭", roles: ["despachador"] },
   { nombre: "Pedidos", href: "/pedidos", icono: "📦", roles: administrativos },
   { nombre: "Nuevo pedido", href: "/pedidos/nuevo", icono: "➕", roles: administrativos },
   { nombre: "Clientes", href: "/clientes", icono: "👥", roles: administrativos },
   { nombre: "Motorizados", href: "/motorizados", icono: "🛵", roles: administrativos },
   { nombre: "Caja", href: "/caja", icono: "💰", roles: administrativos },
-  { nombre: "Reportes", href: "/reportes", icono: "📊", roles: administrativos },
+  { nombre: "Liquidaciones", href: "/liquidaciones", icono: "🧾", roles: administrativos },
+  { nombre: "Reportes", href: "/reportes", icono: "📊", roles: ["administrador"] },
   { nombre: "Configuración", href: "/configuracion", icono: "⚙️", roles: ["administrador"] },
 ];
 
@@ -52,12 +55,15 @@ export default function Sidebar({ nombreUsuario, correoUsuario, rolUsuario }: Si
     if (cerrandoSesion) return;
     setCerrandoSesion(true);
     setError("");
+
     const { error: errorCerrarSesion } = await createClient().auth.signOut();
+
     if (errorCerrarSesion) {
       setError(errorCerrarSesion.message);
       setCerrandoSesion(false);
       return;
     }
+
     router.replace("/login");
     router.refresh();
   }
@@ -89,7 +95,7 @@ export default function Sidebar({ nombreUsuario, correoUsuario, rolUsuario }: Si
       >
         <div className="flex min-h-28 items-center justify-between border-b border-slate-800 px-5 py-3">
           <Link
-            href="/"
+            href={rol === "despachador" ? "/operaciones" : "/"}
             onClick={() => setMenuAbierto(false)}
             className="flex min-w-0 items-center gap-3"
           >

@@ -163,6 +163,25 @@ export default function ListaPedidos() {
 
   useEffect(() => {
     void cargar();
+
+    const canal = supabase
+      .channel("pedidos-admin-realtime")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "pedidos",
+        },
+        () => {
+          void cargar();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(canal);
+    };
   }, []);
 
   const filtrados = useMemo(

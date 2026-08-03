@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import type { RolUsuario } from "@/lib/auth/roles";
 import { esRolUsuario } from "@/lib/auth/roles";
@@ -11,30 +11,50 @@ import { createClient } from "@/lib/supabase/client";
 
 type Perfil = { nombre: string | null; rol: string | null };
 
-export default function AppShell({ children }: { children: ReactNode }) {
-  const pathname = usePathname();
-  const [usuario, setUsuario] = useState<User | null>(null);
-  const [nombre, setNombre] = useState<string | null>(null);
-  const [rol, setRol] = useState<RolUsuario | null>(null);
+const rutasSoloAdministrador = ["/reportes", "/configuracion"];
 
-  const esRutaSinPanel =
+function esRutaPublica(pathname: string) {
+  return (
     pathname === "/login" ||
     pathname === "/recuperar-contrasena" ||
     pathname === "/restablecer-contrasena" ||
     pathname === "/sin-acceso" ||
+    pathname === "/solicitar" ||
+    pathname === "/rastrear" ||
+    pathname.startsWith("/seguimiento/") ||
     pathname === "/motorizado" ||
-    pathname.startsWith("/motorizado/");
+    pathname.startsWith("/motorizado/")
+  );
+}
+
+export default function AppShell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const [usuario, setUsuario] = useState<User | null>(null);
+  const [nombre, setNombre] = useState<string | null>(null);
+  const [rol, setRol] = useState<RolUsuario | null>(null);
+  const [cargandoPerfil, setCargandoPerfil] = useState(true);
+  const rutaPublica = esRutaPublica(pathname);
 
   useEffect(() => {
-    if (esRutaSinPanel) return;
+    if (rutaPublica) {
+      setCargandoPerfil(false);
+      return;
+    }
+
     let activo = true;
     const supabase = createClient();
 
     async function cargarUsuario() {
+      setCargandoPerfil(true);
       const { data } = await supabase.auth.getUser();
       if (!activo) return;
+
       setUsuario(data.user ?? null);
-      if (!data.user) return;
+      if (!data.user) {
+        router.replace(`/login?redirect=${encodeURIComponent(pathname)}`);
+        return;
+      }
 
       const { data: perfil } = await supabase
         .from("perfiles")
@@ -43,18 +63,61 @@ export default function AppShell({ children }: { children: ReactNode }) {
         .maybeSingle<Perfil>();
 
       if (!activo) return;
+
+      const rolValido = esRolUsuario(perfil?.rol) ? perfil.rol : null;
       setNombre(perfil?.nombre ?? null);
-      setRol(esRolUsuario(perfil?.rol) ? perfil.rol : null);
+      setRol(rolValido);
+      setCargandoPerfil(false);
+
+      if (!rolValido) {
+        router.replace("/sin-acceso");
+        return;
+      }
+
+      if (rolValido === "motorizado") {
+        router.replace("/motorizado");
+        return;
+      }
+
+      if (rolValido === "despachador") {
+        const rutaRestringida =
+          pathname === "/" ||
+          rutasSoloAdministrador.some(
+            (ruta) => pathname === ruta || pathname.startsWith(`${ruta}/`)
+          );
+
+        if (rutaRestringida) {
+          router.replace("/operaciones");
+        }
+      }
+
+      if (rolValido === "administrador" && pathname === "/operaciones") {
+        router.replace("/");
+      }
     }
 
     void cargarUsuario();
-    return () => { activo = false; };
-  }, [esRutaSinPanel]);
+    return () => {
+      activo = false;
+    };
+  }, [pathname, router, rutaPublica]);
 
-  if (esRutaSinPanel) return <>{children}</>;
+  if (rutaPublica) return <>{children}</>;
+
+  if (cargandoPerfil || !rol) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-400">
+        Verificando acceso…
+      </main>
+    );
+  }
 
   return (
-    <AdminShell nombreUsuario={nombre} correoUsuario={usuario?.email ?? null} rolUsuario={rol}>
+    <AdminShell
+      nombreUsuario={nombre}
+      correoUsuario={usuario?.email ?? null}
+      rolUsuario={rol}
+    >
       {children}
     </AdminShell>
   );

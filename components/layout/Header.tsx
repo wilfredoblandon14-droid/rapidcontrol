@@ -15,11 +15,13 @@ type HeaderProps = {
 
 const nombresRuta: Record<string, string> = {
   "/": "Dashboard",
+  "/operaciones": "Operaciones del día",
   "/pedidos": "Pedidos",
   "/pedidos/nuevo": "Nuevo pedido",
   "/clientes": "Clientes",
   "/motorizados": "Motorizados",
   "/caja": "Caja",
+  "/liquidaciones": "Liquidaciones",
   "/reportes": "Reportes",
   "/configuracion": "Configuración",
 };

@@ -162,6 +162,22 @@ function estiloEstado(estado: EstadoPedido) {
   return "border-slate-600 bg-slate-500/15 text-slate-300";
 }
 
+const pasosPedido: EstadoPedido[] = [
+  "Asignado",
+  "Recogido",
+  "En camino",
+  "Entregado",
+];
+
+function indicePasoActual(estado: EstadoPedido) {
+  if (estado === "Pendiente") {
+    return 0;
+  }
+
+  const indice = pasosPedido.indexOf(estado);
+  return indice >= 0 ? indice : 0;
+}
+
 export default function VistaMotorizado() {
   const [motorizados, setMotorizados] = useState<
     Motorizado[]
@@ -181,58 +197,93 @@ export default function VistaMotorizado() {
   const [pedidoActualizando, setPedidoActualizando] =
     useState<number | null>(null);
 
+  async function cargarDatos() {
+  setCargando(true);
+  setError("");
+
+  const { data: usuarioData, error: errorUsuario } = await supabase.auth.getUser();
+  if (errorUsuario || !usuarioData.user) {
+    setError(errorUsuario?.message ?? "No hay una sesión activa.");
+    setCargando(false);
+    return;
+  }
+
+  const { data: perfil, error: errorPerfil } = await supabase
+    .from("perfiles")
+    .select("rol, motorizado_id")
+    .eq("id", usuarioData.user.id)
+    .single();
+
+  if (errorPerfil || perfil?.rol !== "motorizado" || !perfil.motorizado_id) {
+    setError("Tu cuenta no está vinculada correctamente con un motorizado.");
+    setCargando(false);
+    return;
+  }
+
+  const motorizadoId = Number(perfil.motorizado_id);
+  const [respuestaMotorizado, respuestaPedidos] = await Promise.all([
+    supabase.from("motorizados").select("id, nombre, telefono, placa, estado").eq("id", motorizadoId).single(),
+    supabase.from("pedidos").select(`
+      id, nombre_cliente, telefono, direccion_recogida, direccion_entrega,
+      costo_envio, monto_compra, estado, metodo_pago, descripcion,
+      observaciones, created_at, motorizado_id, motorizados ( nombre )
+    `).eq("motorizado_id", motorizadoId).in("estado", ["Pendiente", "Asignado", "Recogido", "En camino"]).order("created_at", { ascending: false }),
+  ]);
+
+  if (respuestaMotorizado.error) {
+    setError(`No se pudo cargar tu perfil de motorizado: ${respuestaMotorizado.error.message}`);
+    setCargando(false);
+    return;
+  }
+  if (respuestaPedidos.error) {
+    setError(`No se pudieron cargar tus pedidos: ${respuestaPedidos.error.message}`);
+    setCargando(false);
+    return;
+  }
+
+  setMotorizados([respuestaMotorizado.data as Motorizado]);
+  setPedidos((respuestaPedidos.data ?? []) as Pedido[]);
+  setMotorizadoSeleccionado(motorizadoId);
+  setCargando(false);
+}
+
   useEffect(() => {
-    async function cargarDatos() {
-      setCargando(true);
-      setError("");
-
-      const { data: usuarioData, error: errorUsuario } = await supabase.auth.getUser();
-      if (errorUsuario || !usuarioData.user) {
-        setError(errorUsuario?.message ?? "No hay una sesión activa.");
-        setCargando(false);
-        return;
-      }
-
-      const { data: perfil, error: errorPerfil } = await supabase
-        .from("perfiles")
-        .select("rol, motorizado_id")
-        .eq("id", usuarioData.user.id)
-        .single();
-
-      if (errorPerfil || perfil?.rol !== "motorizado" || !perfil.motorizado_id) {
-        setError("Tu cuenta no está vinculada correctamente con un motorizado.");
-        setCargando(false);
-        return;
-      }
-
-      const motorizadoId = Number(perfil.motorizado_id);
-      const [respuestaMotorizado, respuestaPedidos] = await Promise.all([
-        supabase.from("motorizados").select("id, nombre, telefono, placa, estado").eq("id", motorizadoId).single(),
-        supabase.from("pedidos").select(`
-          id, nombre_cliente, telefono, direccion_recogida, direccion_entrega,
-          costo_envio, monto_compra, estado, metodo_pago, descripcion,
-          observaciones, created_at, motorizado_id, motorizados ( nombre )
-        `).eq("motorizado_id", motorizadoId).in("estado", ["Pendiente", "Asignado", "Recogido", "En camino"]).order("created_at", { ascending: false }),
-      ]);
-
-      if (respuestaMotorizado.error) {
-        setError(`No se pudo cargar tu perfil de motorizado: ${respuestaMotorizado.error.message}`);
-        setCargando(false);
-        return;
-      }
-      if (respuestaPedidos.error) {
-        setError(`No se pudieron cargar tus pedidos: ${respuestaPedidos.error.message}`);
-        setCargando(false);
-        return;
-      }
-
-      setMotorizados([respuestaMotorizado.data as Motorizado]);
-      setPedidos((respuestaPedidos.data ?? []) as Pedido[]);
-      setMotorizadoSeleccionado(motorizadoId);
-      setCargando(false);
-    }
-
     void cargarDatos();
+
+    const canalPedidos = supabase
+      .channel("pedidos-motorizado-realtime")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "pedidos",
+        },
+        () => {
+          void cargarDatos();
+        }
+      )
+      .subscribe();
+
+    const canalMotorizados = supabase
+      .channel("estado-motorizado-realtime")
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "motorizados",
+        },
+        () => {
+          void cargarDatos();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(canalPedidos);
+      void supabase.removeChannel(canalMotorizados);
+    };
   }, []);
 
   const motorizadoActual = useMemo(() => {
@@ -255,6 +306,35 @@ export default function VistaMotorizado() {
         motorizadoSeleccionado
     );
   }, [motorizadoSeleccionado, pedidos]);
+
+  const resumenJornada = useMemo(() => {
+    const pendientes = pedidosFiltrados.filter(
+      (pedido) =>
+        pedido.estado === "Pendiente" ||
+        pedido.estado === "Asignado"
+    ).length;
+
+    const recogidos = pedidosFiltrados.filter(
+      (pedido) => pedido.estado === "Recogido"
+    ).length;
+
+    const enCamino = pedidosFiltrados.filter(
+      (pedido) => pedido.estado === "En camino"
+    ).length;
+
+    const totalEnvios = pedidosFiltrados.reduce(
+      (acumulado, pedido) =>
+        acumulado + Number(pedido.costo_envio ?? 0),
+      0
+    );
+
+    return {
+      pendientes,
+      recogidos,
+      enCamino,
+      totalEnvios,
+    };
+  }, [pedidosFiltrados]);
 
   function seleccionarMotorizado(
     motorizadoId: number
@@ -507,25 +587,35 @@ export default function VistaMotorizado() {
       <div className="mx-auto max-w-3xl">
         <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-sm text-slate-400">
-              Vista de reparto
+            <p className="text-sm font-semibold uppercase tracking-[0.25em] text-green-400">
+              RapidControl
             </p>
 
-            <h1 className="text-3xl font-black">
-              🛵 Mis entregas
+            <h1 className="mt-1 text-3xl font-black">
+              🛵 Mi jornada
             </h1>
           </div>
 
-          <button
-            type="button"
-            onClick={async () => {
-              await supabase.auth.signOut();
-              window.location.href = "/login";
-            }}
-            className="w-fit rounded-xl border border-red-500/40 bg-red-500/10 px-5 py-3 font-bold text-red-300 transition hover:bg-red-500/20"
-          >
-            Cerrar sesión
-          </button>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="rounded-xl border border-slate-700 bg-slate-900 px-5 py-3 font-bold text-slate-200 transition hover:bg-slate-800"
+            >
+              🔄 Actualizar
+            </button>
+
+            <button
+              type="button"
+              onClick={async () => {
+                await supabase.auth.signOut();
+                window.location.href = "/login";
+              }}
+              className="rounded-xl border border-red-500/40 bg-red-500/10 px-5 py-3 font-bold text-red-300 transition hover:bg-red-500/20"
+            >
+              Cerrar sesión
+            </button>
+          </div>
         </header>
 
         {error && (
@@ -622,26 +712,65 @@ export default function VistaMotorizado() {
           motorizadoSeleccionado !== null &&
           motorizadoActual && (
             <>
-              <section className="mb-5 flex flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-900 p-5 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-sm text-slate-400">
-                    Motorizado seleccionado
-                  </p>
+              <section className="mb-5 rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-xl">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm text-slate-400">
+                      Bienvenido a tu jornada
+                    </p>
 
-                  <p className="mt-1 text-xl font-black">
-                    {motorizadoActual.nombre}
-                  </p>
+                    <p className="mt-1 text-2xl font-black">
+                      Hola, {motorizadoActual.nombre} 👋
+                    </p>
 
-                  <p className="mt-1 text-sm text-slate-500">
-                    {motorizadoActual.placa ||
-                      "Sin placa"}{" "}
-                    · {motorizadoActual.estado}
-                  </p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {motorizadoActual.placa || "Sin placa"}{" "}
+                      · {motorizadoActual.estado}
+                    </p>
+                  </div>
+
+                  <span className="w-fit rounded-xl border border-green-500/30 bg-green-500/10 px-5 py-3 font-bold text-green-300">
+                    Cuenta vinculada
+                  </span>
                 </div>
 
-                <span className="rounded-xl border border-green-500/30 bg-green-500/10 px-5 py-3 font-bold text-green-300">
-                  Cuenta vinculada
-                </span>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  <article className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-4">
+                    <p className="text-sm text-blue-200">
+                      Pendientes
+                    </p>
+                    <p className="mt-2 text-3xl font-black text-blue-300">
+                      {resumenJornada.pendientes}
+                    </p>
+                  </article>
+
+                  <article className="rounded-xl border border-violet-500/30 bg-violet-500/10 p-4">
+                    <p className="text-sm text-violet-200">
+                      Recogidos
+                    </p>
+                    <p className="mt-2 text-3xl font-black text-violet-300">
+                      {resumenJornada.recogidos}
+                    </p>
+                  </article>
+
+                  <article className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+                    <p className="text-sm text-amber-200">
+                      En camino
+                    </p>
+                    <p className="mt-2 text-3xl font-black text-amber-300">
+                      {resumenJornada.enCamino}
+                    </p>
+                  </article>
+
+                  <article className="rounded-xl border border-green-500/30 bg-green-500/10 p-4">
+                    <p className="text-sm text-green-200">
+                      Valor de envíos activos
+                    </p>
+                    <p className="mt-2 text-3xl font-black text-green-300">
+                      {formatearDinero(resumenJornada.totalEnvios)}
+                    </p>
+                  </article>
+                </div>
               </section>
 
               {pedidosFiltrados.length === 0 && (
@@ -701,6 +830,36 @@ export default function VistaMotorizado() {
                             >
                               {pedido.estado}
                             </span>
+                          </div>
+
+                          <div className="border-b border-slate-800 px-5 py-4">
+                            <div className="grid grid-cols-4 gap-2">
+                              {pasosPedido.map((paso, indice) => {
+                                const completado =
+                                  indice <= indicePasoActual(pedido.estado);
+
+                                return (
+                                  <div key={paso} className="text-center">
+                                    <div
+                                      className={`mx-auto h-2 rounded-full ${
+                                        completado
+                                          ? "bg-green-500"
+                                          : "bg-slate-700"
+                                      }`}
+                                    />
+                                    <p
+                                      className={`mt-2 text-[11px] font-semibold ${
+                                        completado
+                                          ? "text-green-300"
+                                          : "text-slate-500"
+                                      }`}
+                                    >
+                                      {paso}
+                                    </p>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
 
                           <div className="space-y-5 p-5">
