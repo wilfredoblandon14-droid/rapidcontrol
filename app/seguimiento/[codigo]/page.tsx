@@ -20,6 +20,9 @@ type Seguimiento = {
   created_at: string;
   motorizado_nombre: string | null;
   motorizado_telefono: string | null;
+  motorizado_latitud: number | null;
+  motorizado_longitud: number | null;
+  ubicacion_actualizada: string | null;
 };
 
 const pasos: EstadoPedido[] = ["Pendiente", "Asignado", "Recogido", "En camino", "Entregado"];
@@ -74,14 +77,13 @@ export default function SeguimientoPedido() {
       .channel(`seguimiento-${codigo}`)
       .on(
         "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "pedidos",
-        },
-        () => {
-          void cargar();
-        }
+        { event: "UPDATE", schema: "public", table: "pedidos" },
+        () => void cargar()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "ubicaciones_motorizados" },
+        () => void cargar()
       )
       .subscribe();
 
@@ -179,6 +181,27 @@ export default function SeguimientoPedido() {
                 </div>
               </div>
             </section>
+
+            {datos.estado === "En camino" && datos.motorizado_latitud != null && datos.motorizado_longitud != null && (
+              <section className="overflow-hidden rounded-2xl border border-green-500/30 bg-slate-900">
+                <div className="border-b border-slate-800 p-5">
+                  <p className="text-sm text-green-300">📍 Motorizado en camino</p>
+                  <p className="mt-1 font-bold">Ubicación aproximada compartida durante la jornada.</p>
+                  {datos.ubicacion_actualizada && (
+                    <p className="mt-1 text-xs text-slate-500">
+                      Última actualización: {new Date(datos.ubicacion_actualizada).toLocaleString("es-NI")}
+                    </p>
+                  )}
+                </div>
+                <iframe
+                  title="Ubicación del motorizado"
+                  src={`https://maps.google.com/maps?q=${datos.motorizado_latitud},${datos.motorizado_longitud}&z=15&output=embed`}
+                  className="h-72 w-full border-0"
+                  loading="lazy"
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
+              </section>
+            )}
 
             <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
               <p className="text-sm text-slate-400">Motorizado asignado</p>

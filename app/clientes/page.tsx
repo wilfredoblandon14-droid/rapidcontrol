@@ -11,7 +11,78 @@ type Cliente = {
   direccion: string;
   referencia: string | null;
   created_at: string;
+  pedidos: number;
+  entregados: number;
+  cancelados: number;
+  totalEnvios: number;
+  ultimoPedido: string | null;
+  nivel: "Nuevo" | "Recurrente" | "Frecuente" | "VIP" | "Diamante";
+  puntuacion: number;
 };
+
+type PedidoCliente = {
+  cliente_id: number | null;
+  telefono: string;
+  estado: string;
+  costo_envio: number | null;
+  created_at: string;
+};
+
+function calcularPuntuacion(
+  pedidos: number,
+  entregados: number,
+  cancelados: number,
+  totalEnvios: number,
+  ultimoPedido: string | null,
+  creadoEn: string
+) {
+  const puntosVolumen = Math.min(40, pedidos * 1.2);
+  const tasaEntrega = pedidos > 0 ? entregados / pedidos : 0;
+  const puntosCumplimiento = tasaEntrega * 25;
+  const puntosValor = Math.min(15, totalEnvios / 500);
+
+  const diasSinPedir = ultimoPedido
+    ? Math.max(
+        0,
+        (Date.now() - new Date(ultimoPedido).getTime()) / 86_400_000
+      )
+    : 365;
+  const puntosRecencia = Math.max(0, 12 - diasSinPedir / 10);
+
+  const mesesComoCliente = Math.max(
+    0,
+    (Date.now() - new Date(creadoEn).getTime()) / (30.44 * 86_400_000)
+  );
+  const puntosAntiguedad = Math.min(8, mesesComoCliente / 3);
+  const penalizacionCancelaciones = Math.min(15, cancelados * 2);
+
+  return Math.max(
+    0,
+    Math.min(
+      100,
+      Math.round(
+        puntosVolumen +
+          puntosCumplimiento +
+          puntosValor +
+          puntosRecencia +
+          puntosAntiguedad -
+          penalizacionCancelaciones
+      )
+    )
+  );
+}
+
+function nivelCliente(pedidos: number, puntuacion: number): Cliente["nivel"] {
+  if (pedidos >= 50 && puntuacion >= 80) return "Diamante";
+  if (pedidos >= 25 && puntuacion >= 60) return "VIP";
+  if (pedidos >= 10) return "Frecuente";
+  if (pedidos >= 3) return "Recurrente";
+  return "Nuevo";
+}
+
+function dinero(valor: number) {
+  return new Intl.NumberFormat("es-NI", { style: "currency", currency: "NIO" }).format(valor);
+}
 
 function formatearFecha(fecha: string) {
   return new Intl.DateTimeFormat("es-NI", {
@@ -35,19 +106,56 @@ export default function ListaClientes() {
       setCargando(true);
       setError("");
 
-      const { data, error: errorClientes } = await supabase
-        .from("clientes")
-        .select("id, nombre, telefono, direccion, referencia, created_at")
-        .order("created_at", { ascending: false });
+      const [respuestaClientes, respuestaPedidos] = await Promise.all([
+        supabase.from("clientes").select("id, nombre, telefono, direccion, referencia, created_at").order("created_at", { ascending: false }),
+        supabase.from("pedidos").select("cliente_id, telefono, estado, costo_envio, created_at"),
+      ]);
 
-      if (errorClientes) {
-        console.error(errorClientes);
-        setError(`No se pudieron cargar los clientes: ${errorClientes.message}`);
+      if (respuestaClientes.error) {
+        console.error(respuestaClientes.error);
+        setError(`No se pudieron cargar los clientes: ${respuestaClientes.error.message}`);
+        setCargando(false);
+        return;
+      }
+      if (respuestaPedidos.error) {
+        console.error(respuestaPedidos.error);
+        setError(`No se pudieron calcular las estadísticas: ${respuestaPedidos.error.message}`);
         setCargando(false);
         return;
       }
 
-      setClientes((data ?? []) as Cliente[]);
+      const pedidos = (respuestaPedidos.data ?? []) as PedidoCliente[];
+      const enriquecidos = (respuestaClientes.data ?? []).map((cliente) => {
+        const propios = pedidos.filter((pedido) => pedido.cliente_id === cliente.id || (!pedido.cliente_id && pedido.telefono.replace(/\D/g, "") === cliente.telefono.replace(/\D/g, "")));
+        const entregados = propios.filter((pedido) => pedido.estado === "Entregado");
+        const cancelados = propios.filter((pedido) => pedido.estado === "Cancelado");
+        const ultimoPedido = propios.sort((a,b)=>new Date(b.created_at).getTime()-new Date(a.created_at).getTime())[0]?.created_at ?? null;
+        const totalEnvios = entregados.reduce(
+          (suma, pedido) => suma + Number(pedido.costo_envio ?? 0),
+          0
+        );
+        const puntuacion = calcularPuntuacion(
+          propios.length,
+          entregados.length,
+          cancelados.length,
+          totalEnvios,
+          ultimoPedido,
+          cliente.created_at
+        );
+
+        return {
+          ...cliente,
+          pedidos: propios.length,
+          entregados: entregados.length,
+          cancelados: cancelados.length,
+          totalEnvios,
+          ultimoPedido,
+          puntuacion,
+          nivel: nivelCliente(propios.length, puntuacion),
+        } as Cliente;
+      });
+
+      setClientes(enriquecidos);
       setCargando(false);
     }
 
@@ -126,6 +234,13 @@ export default function ListaClientes() {
               className="rounded-xl border border-slate-700 px-6 py-3 text-center font-bold transition hover:bg-slate-800"
             >
               ← Dashboard
+            </Link>
+
+            <Link
+              href="/inteligencia"
+              className="rounded-xl border border-green-500/40 bg-green-500/10 px-6 py-3 text-center font-bold text-green-300 transition hover:bg-green-500/20"
+            >
+              🧠 Ver inteligencia
             </Link>
 
             <Link
@@ -208,14 +323,18 @@ export default function ListaClientes() {
 
           {!cargando && clientesFiltrados.length > 0 && (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1000px] border-collapse text-left">
+              <table className="w-full min-w-[1450px] border-collapse text-left">
                 <thead className="bg-slate-950/50 text-sm text-slate-400">
                   <tr>
                     <th className="px-5 py-4 font-semibold">Cliente</th>
                     <th className="px-5 py-4 font-semibold">Teléfono</th>
                     <th className="px-5 py-4 font-semibold">Dirección</th>
                     <th className="px-5 py-4 font-semibold">Referencia</th>
-                    <th className="px-5 py-4 font-semibold">Registrado</th>
+                    <th className="px-5 py-4 font-semibold">Pedidos</th>
+                    <th className="px-5 py-4 font-semibold">Nivel</th>
+                    <th className="px-5 py-4 font-semibold">Puntuación</th>
+                    <th className="px-5 py-4 font-semibold">Generado</th>
+                    <th className="px-5 py-4 font-semibold">Último pedido</th>
                     <th className="px-5 py-4 text-right font-semibold">
                       Acciones
                     </th>
@@ -263,12 +382,33 @@ export default function ListaClientes() {
                           {cliente.referencia || "Sin referencia"}
                         </td>
 
-                        <td className="whitespace-nowrap px-5 py-5 text-slate-400">
-                          {formatearFecha(cliente.created_at)}
+                        <td className="px-5 py-5"><p className="text-xl font-black">{cliente.pedidos}</p><p className="text-xs text-slate-500">{cliente.entregados} entregados · {cliente.cancelados} cancelados</p></td>
+                        <td className="px-5 py-5"><span className="rounded-full border border-green-500/30 bg-green-500/10 px-3 py-2 text-xs font-black text-green-300">{cliente.nivel}</span></td>
+                        <td className="px-5 py-5">
+                          <div className="flex items-center gap-3">
+                            <div className="h-2 w-20 overflow-hidden rounded-full bg-slate-700">
+                              <div
+                                className="h-full rounded-full bg-green-500"
+                                style={{ width: `${cliente.puntuacion}%` }}
+                              />
+                            </div>
+                            <span className="font-black text-white">
+                              {cliente.puntuacion}/100
+                            </span>
+                          </div>
                         </td>
+                        <td className="px-5 py-5 font-bold text-green-400">{dinero(cliente.totalEnvios)}</td>
+                        <td className="whitespace-nowrap px-5 py-5 text-slate-400">{cliente.ultimoPedido ? formatearFecha(cliente.ultimoPedido) : "Sin pedidos"}</td>
 
                         <td className="px-5 py-5">
                           <div className="flex justify-end gap-2">
+                            <Link
+                              href={`/clientes/${cliente.id}`}
+                              className="rounded-lg border border-green-500/40 bg-green-500/10 px-4 py-2 text-sm font-semibold text-green-300 transition hover:bg-green-500/20"
+                            >
+                              Expediente
+                            </Link>
+
                             <Link
                               href={`/clientes/${cliente.id}/editar`}
                               className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold transition hover:bg-slate-800"

@@ -30,9 +30,13 @@ const opcionesMenu: OpcionMenu[] = [
   { nombre: "Nuevo pedido", href: "/pedidos/nuevo", icono: "➕", roles: administrativos },
   { nombre: "Clientes", href: "/clientes", icono: "👥", roles: administrativos },
   { nombre: "Motorizados", href: "/motorizados", icono: "🛵", roles: administrativos },
+  { nombre: "Ubicaciones", href: "/ubicaciones", icono: "📍", roles: administrativos },
   { nombre: "Caja", href: "/caja", icono: "💰", roles: administrativos },
   { nombre: "Liquidaciones", href: "/liquidaciones", icono: "🧾", roles: administrativos },
   { nombre: "Reportes", href: "/reportes", icono: "📊", roles: ["administrador"] },
+  { nombre: "Rendimiento", href: "/rendimiento", icono: "📈", roles: ["administrador"] },
+  { nombre: "Calendario", href: "/calendario", icono: "📅", roles: ["administrador"] },
+  { nombre: "Inteligencia", href: "/inteligencia", icono: "🧠", roles: ["administrador"] },
   { nombre: "Configuración", href: "/configuracion", icono: "⚙️", roles: ["administrador"] },
 ];
 

@@ -4,6 +4,7 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import type { RolUsuario } from "@/lib/auth/roles";
 import { nombresRol } from "@/lib/auth/roles";
+import NotificationsBell from "@/components/notifications/NotificationsBell";
 
 type HeaderProps = {
   titulo?: string;
@@ -70,6 +71,8 @@ export default function Header({
         </div>
 
         <div className="flex items-center gap-3 self-end sm:self-auto">
+          <NotificationsBell rolUsuario={rolUsuario} compacto />
+
           <div className="hidden text-right sm:block">
             <p className="text-sm font-bold text-white">{nombreUsuario || rolVisible}</p>
             <p className="max-w-56 truncate text-xs text-slate-400">

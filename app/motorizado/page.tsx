@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
+import NotificationsBell from "@/components/notifications/NotificationsBell";
 
 type EstadoPedido =
   | "Pendiente"
@@ -46,6 +47,18 @@ type Pedido = {
   created_at: string;
   motorizado_id: number | null;
   motorizados: RelacionMotorizado;
+};
+
+
+type UbicacionJornada = {
+  motorizado_id: number;
+  latitud: number | null;
+  longitud: number | null;
+  precision_metros: number | null;
+  jornada_activa: boolean;
+  inicio_jornada: string | null;
+  fin_jornada: string | null;
+  ultima_actualizacion: string | null;
 };
 
 type ResultadoCaja = {
@@ -197,6 +210,13 @@ export default function VistaMotorizado() {
   const [pedidoActualizando, setPedidoActualizando] =
     useState<number | null>(null);
 
+  const [jornadaActiva, setJornadaActiva] = useState(false);
+  const [ubicacionActual, setUbicacionActual] =
+    useState<UbicacionJornada | null>(null);
+  const [procesandoJornada, setProcesandoJornada] = useState(false);
+  const watchIdRef = useRef<number | null>(null);
+  const ultimoEnvioRef = useRef(0);
+
   async function cargarDatos() {
   setCargando(true);
   setError("");
@@ -221,13 +241,18 @@ export default function VistaMotorizado() {
   }
 
   const motorizadoId = Number(perfil.motorizado_id);
-  const [respuestaMotorizado, respuestaPedidos] = await Promise.all([
+  const [respuestaMotorizado, respuestaPedidos, respuestaUbicacion] = await Promise.all([
     supabase.from("motorizados").select("id, nombre, telefono, placa, estado").eq("id", motorizadoId).single(),
     supabase.from("pedidos").select(`
       id, nombre_cliente, telefono, direccion_recogida, direccion_entrega,
       costo_envio, monto_compra, estado, metodo_pago, descripcion,
       observaciones, created_at, motorizado_id, motorizados ( nombre )
     `).eq("motorizado_id", motorizadoId).in("estado", ["Pendiente", "Asignado", "Recogido", "En camino"]).order("created_at", { ascending: false }),
+    supabase
+      .from("ubicaciones_motorizados")
+      .select("motorizado_id, latitud, longitud, precision_metros, jornada_activa, inicio_jornada, fin_jornada, ultima_actualizacion")
+      .eq("motorizado_id", motorizadoId)
+      .maybeSingle(),
   ]);
 
   if (respuestaMotorizado.error) {
@@ -244,8 +269,152 @@ export default function VistaMotorizado() {
   setMotorizados([respuestaMotorizado.data as Motorizado]);
   setPedidos((respuestaPedidos.data ?? []) as Pedido[]);
   setMotorizadoSeleccionado(motorizadoId);
+
+  if (!respuestaUbicacion.error && respuestaUbicacion.data) {
+    const ubicacion = respuestaUbicacion.data as UbicacionJornada;
+    setUbicacionActual(ubicacion);
+    setJornadaActiva(Boolean(ubicacion.jornada_activa));
+
+    if (ubicacion.jornada_activa && watchIdRef.current === null) {
+      iniciarVigilanciaGPS(motorizadoId);
+    }
+  } else {
+    setUbicacionActual(null);
+    setJornadaActiva(false);
+  }
+
   setCargando(false);
 }
+
+  async function guardarPosicion(
+    motorizadoId: number,
+    posicion: GeolocationPosition,
+    iniciar = false
+  ) {
+    const { data: usuarioData } = await supabase.auth.getUser();
+    if (!usuarioData.user) return;
+
+    const ahora = new Date().toISOString();
+    const registro = {
+      motorizado_id: motorizadoId,
+      user_id: usuarioData.user.id,
+      latitud: posicion.coords.latitude,
+      longitud: posicion.coords.longitude,
+      precision_metros: posicion.coords.accuracy,
+      jornada_activa: true,
+      fin_jornada: null,
+      ultima_actualizacion: ahora,
+      ...(iniciar ? { inicio_jornada: ahora } : {}),
+    };
+
+    const { data, error: errorUbicacion } = await supabase
+      .from("ubicaciones_motorizados")
+      .upsert(registro, { onConflict: "motorizado_id" })
+      .select("motorizado_id, latitud, longitud, precision_metros, jornada_activa, inicio_jornada, fin_jornada, ultima_actualizacion")
+      .single();
+
+    if (errorUbicacion) {
+      console.error(errorUbicacion);
+      setError(`No se pudo compartir la ubicación: ${errorUbicacion.message}`);
+      return;
+    }
+
+    setUbicacionActual(data as UbicacionJornada);
+    setJornadaActiva(true);
+  }
+
+  function iniciarVigilanciaGPS(motorizadoId: number) {
+    if (!navigator.geolocation || watchIdRef.current !== null) return;
+
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (posicion) => {
+        const ahora = Date.now();
+        if (ahora - ultimoEnvioRef.current < 20_000) return;
+        ultimoEnvioRef.current = ahora;
+        void guardarPosicion(motorizadoId, posicion);
+      },
+      (errorGPS) => {
+        console.error(errorGPS);
+        setError(
+          errorGPS.code === errorGPS.PERMISSION_DENIED
+            ? "Debes permitir el acceso a la ubicación para compartir tu jornada."
+            : "No se pudo obtener tu ubicación. Verifica el GPS y los datos móviles."
+        );
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 10_000,
+        timeout: 20_000,
+      }
+    );
+  }
+
+  async function iniciarJornada() {
+    if (!motorizadoSeleccionado) return;
+    if (!navigator.geolocation) {
+      setError("Este dispositivo no permite compartir ubicación.");
+      return;
+    }
+
+    setProcesandoJornada(true);
+    setError("");
+    setMensaje("");
+
+    navigator.geolocation.getCurrentPosition(
+      async (posicion) => {
+        ultimoEnvioRef.current = Date.now();
+        await guardarPosicion(motorizadoSeleccionado, posicion, true);
+        iniciarVigilanciaGPS(motorizadoSeleccionado);
+        setMensaje("Jornada iniciada. Tu ubicación se está compartiendo.");
+        setProcesandoJornada(false);
+      },
+      (errorGPS) => {
+        setError(
+          errorGPS.code === errorGPS.PERMISSION_DENIED
+            ? "Permite la ubicación en el navegador para iniciar la jornada."
+            : "No se pudo obtener la ubicación. Activa el GPS e inténtalo otra vez."
+        );
+        setProcesandoJornada(false);
+      },
+      { enableHighAccuracy: true, timeout: 20_000, maximumAge: 0 }
+    );
+  }
+
+  async function finalizarJornada() {
+    if (!motorizadoSeleccionado) return;
+    setProcesandoJornada(true);
+    setError("");
+
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+
+    const ahora = new Date().toISOString();
+    const { error: errorFinalizar } = await supabase
+      .from("ubicaciones_motorizados")
+      .update({
+        jornada_activa: false,
+        fin_jornada: ahora,
+        ultima_actualizacion: ahora,
+      })
+      .eq("motorizado_id", motorizadoSeleccionado);
+
+    if (errorFinalizar) {
+      setError(`No se pudo finalizar la jornada: ${errorFinalizar.message}`);
+      setProcesandoJornada(false);
+      return;
+    }
+
+    setJornadaActiva(false);
+    setUbicacionActual((actual) =>
+      actual
+        ? { ...actual, jornada_activa: false, fin_jornada: ahora, ultima_actualizacion: ahora }
+        : actual
+    );
+    setMensaje("Jornada finalizada. Dejaste de compartir tu ubicación.");
+    setProcesandoJornada(false);
+  }
 
   useEffect(() => {
     void cargarDatos();
@@ -283,6 +452,10 @@ export default function VistaMotorizado() {
     return () => {
       void supabase.removeChannel(canalPedidos);
       void supabase.removeChannel(canalMotorizados);
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
     };
   }, []);
 
@@ -596,7 +769,9 @@ export default function VistaMotorizado() {
             </h1>
           </div>
 
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <NotificationsBell rolUsuario="motorizado" compacto />
+
             <button
               type="button"
               onClick={() => window.location.reload()}
@@ -770,6 +945,54 @@ export default function VistaMotorizado() {
                       {formatearDinero(resumenJornada.totalEnvios)}
                     </p>
                   </article>
+                </div>
+              </section>
+
+              <section className={`mb-5 rounded-2xl border p-5 shadow-xl ${
+                jornadaActiva
+                  ? "border-green-500/40 bg-green-500/10"
+                  : "border-slate-800 bg-slate-900"
+              }`}>
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm text-slate-400">Ubicación durante la jornada</p>
+                    <h2 className="mt-1 text-xl font-black">
+                      {jornadaActiva ? "🟢 GPS activo" : "⚪ GPS detenido"}
+                    </h2>
+                    <p className="mt-2 text-sm text-slate-400">
+                      {jornadaActiva
+                        ? "Tu posición se actualiza aproximadamente cada 20 segundos mientras esta página permanece activa."
+                        : "Inicia la jornada para que Administración y Operaciones puedan ver tu ubicación."}
+                    </p>
+                    {ubicacionActual?.ultima_actualizacion && (
+                      <p className="mt-2 text-xs text-slate-500">
+                        Último envío: {new Date(ubicacionActual.ultima_actualizacion).toLocaleString("es-NI")}
+                        {ubicacionActual.precision_metros
+                          ? ` · precisión aproximada ${Math.round(ubicacionActual.precision_metros)} m`
+                          : ""}
+                      </p>
+                    )}
+                  </div>
+
+                  {jornadaActiva ? (
+                    <button
+                      type="button"
+                      disabled={procesandoJornada}
+                      onClick={() => void finalizarJornada()}
+                      className="rounded-xl bg-red-600 px-6 py-4 font-black transition hover:bg-red-500 disabled:opacity-60"
+                    >
+                      {procesandoJornada ? "Procesando..." : "🔴 Finalizar jornada"}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={procesandoJornada}
+                      onClick={() => void iniciarJornada()}
+                      className="rounded-xl bg-green-600 px-6 py-4 font-black transition hover:bg-green-500 disabled:opacity-60"
+                    >
+                      {procesandoJornada ? "Obteniendo ubicación..." : "🟢 Iniciar jornada"}
+                    </button>
+                  )}
                 </div>
               </section>
 

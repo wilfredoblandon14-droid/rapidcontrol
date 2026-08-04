@@ -498,6 +498,13 @@ export default function ListaMotorizados() {
                         <td className="px-5 py-5">
                           <div className="flex justify-end gap-2">
                             <Link
+                              href={`/motorizados/${motorizado.id}`}
+                              className="rounded-lg border border-green-500/40 bg-green-500/10 px-4 py-2 text-sm font-bold text-green-300 transition hover:bg-green-500/20"
+                            >
+                              Expediente
+                            </Link>
+
+                            <Link
                               href={`/motorizados/${motorizado.id}/editar`}
                               className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-bold transition hover:bg-slate-800"
                             >

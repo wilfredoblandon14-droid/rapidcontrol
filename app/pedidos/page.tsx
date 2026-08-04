@@ -16,6 +16,7 @@ type RelMoto =
 
 type Pedido = {
   id: number;
+  codigo: string | null;
   nombre_cliente: string;
   telefono: string;
   direccion_recogida: string;
@@ -79,6 +80,26 @@ function enlaceWhatsApp(telefono: string, mensaje: string) {
   const numero = telefonoWhatsApp(telefono);
   if (!numero) return "";
   return `https://wa.me/${numero}?text=${encodeURIComponent(mensaje)}`;
+}
+
+function enlaceSeguimiento(pedido: Pedido) {
+  if (!pedido.codigo || typeof window === "undefined") return "";
+  return `${window.location.origin}/seguimiento/${encodeURIComponent(pedido.codigo)}`;
+}
+
+function mensajeSeguimiento(pedido: Pedido) {
+  return [
+    `Hola ${pedido.nombre_cliente} 👋`,
+    "",
+    "Tu pedido está registrado en Mandados Rapid.",
+    `📦 Pedido: #${pedido.id}`,
+    `🔑 Código de seguimiento: ${pedido.codigo ?? "No disponible"}`,
+    "",
+    "Puedes consultar el estado aquí:",
+    enlaceSeguimiento(pedido),
+    "",
+    "Gracias por preferir Mandados Rapid 🚀",
+  ].join("\n");
 }
 
 function mensajeCliente(pedido: Pedido) {
@@ -151,7 +172,7 @@ export default function ListaPedidos() {
     const { data, error: errorCarga } = await supabase
       .from("pedidos")
       .select(
-        "id,nombre_cliente,telefono,direccion_recogida,direccion_entrega,costo_envio,monto_compra,estado,metodo_pago,created_at,motorizado_id,motorizados(nombre,telefono)"
+        "id,codigo,nombre_cliente,telefono,direccion_recogida,direccion_entrega,costo_envio,monto_compra,estado,metodo_pago,created_at,motorizado_id,motorizados(nombre,telefono)"
       )
       .order("created_at", { ascending: false });
 
@@ -191,6 +212,7 @@ export default function ListaPedidos() {
         const coincide =
           !termino ||
           String(pedido.id).includes(termino) ||
+          (pedido.codigo ?? "").toLowerCase().includes(termino) ||
           pedido.nombre_cliente.toLowerCase().includes(termino) ||
           pedido.telefono.toLowerCase().includes(termino) ||
           pedido.direccion_recogida.toLowerCase().includes(termino) ||
@@ -254,6 +276,34 @@ export default function ListaPedidos() {
       return;
     }
     abrir(url);
+  }
+
+  function enviarSeguimiento(pedido: Pedido) {
+    if (!pedido.codigo) {
+      setError("Este pedido no tiene un código de seguimiento.");
+      return;
+    }
+    const url = enlaceWhatsApp(pedido.telefono, mensajeSeguimiento(pedido));
+    if (!url) {
+      setError("El cliente no tiene un número de teléfono válido.");
+      return;
+    }
+    abrir(url);
+  }
+
+  async function copiarSeguimiento(pedido: Pedido) {
+    const url = enlaceSeguimiento(pedido);
+    if (!url) {
+      setError("Este pedido no tiene un código de seguimiento.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setMensaje(`Enlace del pedido #${pedido.id} copiado.`);
+      window.setTimeout(() => setMensaje(""), 3000);
+    } catch {
+      setError("No se pudo copiar el enlace.");
+    }
   }
 
   function enviarMotorizado(pedido: Pedido) {
@@ -351,7 +401,12 @@ export default function ListaPedidos() {
 
                     return (
                       <tr key={pedido.id} className="border-t border-slate-800 align-top hover:bg-slate-800/30">
-                        <td className="px-4 py-4 font-bold text-green-400">#{pedido.id}</td>
+                        <td className="px-4 py-4">
+                          <p className="font-bold text-green-400">#{pedido.id}</p>
+                          <p className="mt-1 font-mono text-xs text-slate-500">
+                            {pedido.codigo ?? "Sin código"}
+                          </p>
+                        </td>
                         <td className="px-4 py-4">
                           <p className="font-semibold">{pedido.nombre_cliente}</p>
                           <p className="text-slate-400">{pedido.telefono}</p>
@@ -394,6 +449,20 @@ export default function ListaPedidos() {
                         <td className="px-4 py-4 text-slate-400">{fecha(pedido.created_at)}</td>
                         <td className="px-4 py-4">
                           <div className="flex flex-wrap justify-end gap-2">
+                            <button
+                              onClick={() => enviarSeguimiento(pedido)}
+                              disabled={!pedido.codigo}
+                              className="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              📲 Enviar seguimiento
+                            </button>
+                            <button
+                              onClick={() => void copiarSeguimiento(pedido)}
+                              disabled={!pedido.codigo}
+                              className="rounded-lg border border-slate-600 px-3 py-2 text-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              📋 Copiar enlace
+                            </button>
                             <button onClick={() => avisarCliente(pedido)} className="rounded-lg border border-green-500/40 bg-green-500/10 px-3 py-2 text-green-300">
                               WhatsApp cliente
                             </button>
