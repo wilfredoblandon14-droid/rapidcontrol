@@ -87,10 +87,16 @@ type GastoDia = {
 type LiquidacionDia = {
   id: number;
   motorizado_id: number;
+  fondo_entregado: number;
+  envios_generados: number;
+  gasolina: number;
+  recargas: number;
+  otros_gastos: number;
   esperado: number;
   recibido: number;
   diferencia: number;
   fecha: string;
+  created_at: string;
 };
 
 function obtenerNombreMotorizado(
@@ -318,11 +324,10 @@ export default function VistaMotorizado() {
       .eq("motorizado_id", motorizadoId)
       .eq("fecha", hoyLocal()),
     supabase.from("liquidaciones_motorizado")
-      .select("id,motorizado_id,esperado,recibido,diferencia,fecha")
+      .select("id,motorizado_id,fondo_entregado,envios_generados,gasolina,recargas,otros_gastos,esperado,recibido,diferencia,fecha,created_at")
       .eq("motorizado_id", motorizadoId)
       .eq("fecha", hoyLocal())
-      .order("created_at", { ascending: false })
-      .limit(1),
+      .order("created_at", { ascending: false }),
     supabase
       .from("ubicaciones_motorizados")
       .select("motorizado_id, latitud, longitud, precision_metros, jornada_activa, inicio_jornada, fin_jornada, ultima_actualizacion")
@@ -520,24 +525,33 @@ export default function VistaMotorizado() {
       )
       .subscribe();
 
-    const canalMotorizados = supabase
-      .channel("estado-motorizado-realtime")
+    const canalFinanciero = supabase
+      .channel("motorizado-financiero-realtime")
       .on(
         "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "motorizados",
-        },
-        () => {
-          void cargarDatos();
-        }
+        { event: "UPDATE", schema: "public", table: "motorizados" },
+        () => void cargarDatos()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "fondos_motorizado" },
+        () => void cargarDatos()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "gastos_motorizado" },
+        () => void cargarDatos()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "liquidaciones_motorizado" },
+        () => void cargarDatos()
       )
       .subscribe();
 
     return () => {
       void supabase.removeChannel(canalPedidos);
-      void supabase.removeChannel(canalMotorizados);
+      void supabase.removeChannel(canalFinanciero);
       if (watchIdRef.current !== null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
         watchIdRef.current = null;
@@ -610,6 +624,8 @@ export default function VistaMotorizado() {
         efectivoActual: 0,
         disponibleCompras: 0,
         pedidosEntregados: 0,
+        cantidadLiquidaciones: 0,
+        totalRecibidoLiquidaciones: 0,
         liquidacion: null as LiquidacionDia | null,
       };
     }
@@ -688,6 +704,12 @@ export default function VistaMotorizado() {
       efectivoActual,
       disponibleCompras: Math.max(0, efectivoActual),
       pedidosEntregados: entregados.length,
+      cantidadLiquidaciones: liquidacionesDia.filter(
+        (item) => item.motorizado_id === motorizadoSeleccionado
+      ).length,
+      totalRecibidoLiquidaciones: liquidacionesDia
+        .filter((item) => item.motorizado_id === motorizadoSeleccionado)
+        .reduce((total, item) => total + Number(item.recibido ?? 0), 0),
       liquidacion:
         liquidacionesDia.find(
           (item) => item.motorizado_id === motorizadoSeleccionado
@@ -1256,7 +1278,10 @@ export default function VistaMotorizado() {
                     </p>
                     {resumenFinanciero.liquidacion && (
                       <p className="mt-3 rounded-xl bg-slate-950/40 p-3 text-sm text-slate-300">
-                        Recepción registró {formatearDinero(resumenFinanciero.liquidacion.recibido)} · Diferencia {formatearDinero(resumenFinanciero.liquidacion.diferencia)}
+                        Última liquidación: recepción registró {formatearDinero(resumenFinanciero.liquidacion.recibido)} · Diferencia {formatearDinero(resumenFinanciero.liquidacion.diferencia)} · {new Date(resumenFinanciero.liquidacion.created_at).toLocaleString("es-NI")}
+                        {resumenFinanciero.cantidadLiquidaciones > 1
+                          ? ` · ${resumenFinanciero.cantidadLiquidaciones} liquidaciones hoy · Total recibido ${formatearDinero(resumenFinanciero.totalRecibidoLiquidaciones)}`
+                          : ""}
                       </p>
                     )}
                   </article>
