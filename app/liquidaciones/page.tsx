@@ -429,7 +429,7 @@ export default function LiquidacionesPage() {
         fondo_entregado: actual.fondoPendiente,
         envios_generados: actual.enviosPendientes,
         gasolina: actual.gasolinaPendiente,
-        recargas: actual.recargasPendiente,
+        recargas: actual.recargasPendientes,
         otros_gastos: actual.otrosPendientes,
         esperado: actual.esperadoPendiente,
         recibido,
