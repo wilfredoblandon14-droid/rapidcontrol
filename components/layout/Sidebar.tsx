@@ -24,43 +24,134 @@ type OpcionMenu = {
 const administrativos: RolUsuario[] = ["administrador", "despachador"];
 
 const opcionesMenu: OpcionMenu[] = [
-  { nombre: "Dashboard", href: "/", icono: "🏠", roles: ["administrador"] },
-  { nombre: "Operaciones", href: "/operaciones", icono: "🧭", roles: ["despachador"] },
-  { nombre: "Pedidos", href: "/pedidos", icono: "📦", roles: administrativos },
-  { nombre: "Nuevo pedido", href: "/pedidos/nuevo", icono: "➕", roles: administrativos },
-  { nombre: "Clientes", href: "/clientes", icono: "👥", roles: administrativos },
-  { nombre: "Motorizados", href: "/motorizados", icono: "🛵", roles: administrativos },
-  { nombre: "Ubicaciones", href: "/ubicaciones", icono: "📍", roles: administrativos },
-  { nombre: "Caja", href: "/caja", icono: "💰", roles: administrativos },
-  { nombre: "Liquidaciones", href: "/liquidaciones", icono: "🧾", roles: administrativos },
-  { nombre: "Reportes", href: "/reportes", icono: "📊", roles: ["administrador"] },
-  { nombre: "Rendimiento", href: "/rendimiento", icono: "📈", roles: ["administrador"] },
-  { nombre: "Calendario", href: "/calendario", icono: "📅", roles: ["administrador"] },
-  { nombre: "Inteligencia", href: "/inteligencia", icono: "🧠", roles: ["administrador"] },
-  { nombre: "Configuración", href: "/configuracion", icono: "⚙️", roles: ["administrador"] },
+  {
+    nombre: "Dashboard",
+    href: "/",
+    icono: "🏠",
+    roles: ["administrador"],
+  },
+  {
+    nombre: "Operaciones",
+    href: "/operaciones",
+    icono: "🧭",
+    roles: ["despachador"],
+  },
+  {
+    nombre: "Pedidos",
+    href: "/pedidos",
+    icono: "📦",
+    roles: administrativos,
+  },
+  {
+    nombre: "Nuevo pedido",
+    href: "/pedidos/nuevo",
+    icono: "➕",
+    roles: administrativos,
+  },
+  {
+    nombre: "Clientes",
+    href: "/clientes",
+    icono: "👥",
+    roles: administrativos,
+  },
+  {
+    nombre: "Motorizados",
+    href: "/motorizados",
+    icono: "🛵",
+    roles: administrativos,
+  },
+  {
+    nombre: "Ubicaciones",
+    href: "/ubicaciones",
+    icono: "📍",
+    roles: administrativos,
+  },
+  {
+    nombre: "Caja",
+    href: "/caja",
+    icono: "💰",
+    roles: administrativos,
+  },
+  {
+    nombre: "Liquidaciones",
+    href: "/liquidaciones",
+    icono: "🧾",
+    roles: administrativos,
+  },
+  {
+    nombre: "Reportes",
+    href: "/reportes",
+    icono: "📊",
+    roles: ["administrador"],
+  },
+  {
+    nombre: "Rendimiento",
+    href: "/rendimiento",
+    icono: "📈",
+    roles: ["administrador"],
+  },
+  {
+    nombre: "Calendario",
+    href: "/calendario",
+    icono: "📅",
+    roles: ["administrador"],
+  },
+  {
+    nombre: "Inteligencia",
+    href: "/inteligencia",
+    icono: "🧠",
+    roles: ["administrador"],
+  },
+  {
+    nombre: "Administración",
+    href: "/administracion",
+    icono: "🛡️",
+    roles: ["administrador"],
+  },
+  {
+    nombre: "Configuración",
+    href: "/configuracion",
+    icono: "⚙️",
+    roles: ["administrador"],
+  },
 ];
 
 function rutaActiva(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
-  if (href === "/pedidos") return pathname === "/pedidos" || pathname.includes("/editar");
+
+  if (href === "/pedidos") {
+    return pathname === "/pedidos" || pathname.includes("/editar");
+  }
+
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export default function Sidebar({ nombreUsuario, correoUsuario, rolUsuario }: SidebarProps) {
+export default function Sidebar({
+  nombreUsuario,
+  correoUsuario,
+  rolUsuario,
+}: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+
   const [menuAbierto, setMenuAbierto] = useState(false);
   const [cerrandoSesion, setCerrandoSesion] = useState(false);
   const [error, setError] = useState("");
+
   const rol = rolUsuario ?? "despachador";
-  const opcionesVisibles = opcionesMenu.filter((opcion) => opcion.roles.includes(rol));
+
+  const opcionesVisibles = opcionesMenu.filter((opcion) =>
+    opcion.roles.includes(rol),
+  );
 
   async function cerrarSesion() {
     if (cerrandoSesion) return;
+
     setCerrandoSesion(true);
     setError("");
 
-    const { error: errorCerrarSesion } = await createClient().auth.signOut();
+    const { error: errorCerrarSesion } =
+      await createClient().auth.signOut();
 
     if (errorCerrarSesion) {
       setError(errorCerrarSesion.message);
@@ -113,9 +204,14 @@ export default function Sidebar({ nombreUsuario, correoUsuario, rolUsuario }: Si
                 priority
               />
             </div>
+
             <div className="min-w-0">
-              <p className="truncate text-lg font-black leading-none">RapidControl</p>
-              <p className="mt-1 text-xs text-slate-400">Mandados Rapid</p>
+              <p className="truncate text-lg font-black leading-none">
+                RapidControl
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                Mandados Rapid
+              </p>
             </div>
           </Link>
 
@@ -133,9 +229,11 @@ export default function Sidebar({ nombreUsuario, correoUsuario, rolUsuario }: Si
           <p className="mb-3 px-3 text-xs font-bold uppercase tracking-widest text-slate-500">
             Navegación
           </p>
+
           <div className="space-y-2">
             {opcionesVisibles.map((opcion) => {
               const activa = rutaActiva(pathname, opcion.href);
+
               return (
                 <Link
                   key={opcion.href}
@@ -147,7 +245,9 @@ export default function Sidebar({ nombreUsuario, correoUsuario, rolUsuario }: Si
                       : "text-slate-300 hover:bg-slate-900 hover:text-white"
                   }`}
                 >
-                  <span className="flex h-8 w-8 items-center justify-center text-lg">{opcion.icono}</span>
+                  <span className="flex h-8 w-8 items-center justify-center text-lg">
+                    {opcion.icono}
+                  </span>
                   <span>{opcion.nombre}</span>
                 </Link>
               );
@@ -159,11 +259,19 @@ export default function Sidebar({ nombreUsuario, correoUsuario, rolUsuario }: Si
           <div className="mb-4 rounded-xl border border-slate-800 bg-slate-900/70 p-4">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-800 font-black text-green-400">
-                {(nombreUsuario || correoUsuario || "U").trim().charAt(0).toUpperCase()}
+                {(nombreUsuario || correoUsuario || "U")
+                  .trim()
+                  .charAt(0)
+                  .toUpperCase()}
               </div>
+
               <div className="min-w-0">
-                <p className="truncate text-sm font-bold">{nombreUsuario || nombresRol[rol]}</p>
-                <p className="truncate text-xs text-slate-400">{correoUsuario || nombresRol[rol]}</p>
+                <p className="truncate text-sm font-bold">
+                  {nombreUsuario || nombresRol[rol]}
+                </p>
+                <p className="truncate text-xs text-slate-400">
+                  {correoUsuario || nombresRol[rol]}
+                </p>
                 <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-green-400">
                   {nombresRol[rol]}
                 </p>

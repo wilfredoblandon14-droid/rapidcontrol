@@ -3,56 +3,71 @@
 import Image from "next/image";
 import Link from "next/link";
 import { Suspense, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { esRolUsuario, rutaInicialPorRol } from "@/lib/auth/roles";
-import { createClient } from "@/lib/supabase/client";
+import { useSearchParams } from "next/navigation";
 
 function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
+
   const [correo, setCorreo] = useState("");
   const [password, setPassword] = useState("");
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
 
-  async function iniciarSesion(evento: React.FormEvent<HTMLFormElement>) {
+  async function iniciarSesion(
+    evento: React.FormEvent<HTMLFormElement>,
+  ) {
     evento.preventDefault();
     setError("");
     setCargando(true);
 
-    const supabase = createClient();
-    const { data, error: errorInicio } = await supabase.auth.signInWithPassword({
-      email: correo.trim(),
-      password,
-    });
+    try {
+      const respuesta = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          correo: correo.trim(),
+          password,
+          redirect: searchParams.get("redirect"),
+        }),
+      });
 
-    if (errorInicio || !data.user) {
-      setError(errorInicio?.message ?? "No se pudo iniciar sesión.");
+      const resultado = (await respuesta.json()) as {
+        correcto?: boolean;
+        destino?: string;
+        error?: string;
+      };
+
+      if (
+        !respuesta.ok ||
+        !resultado.correcto ||
+        !resultado.destino
+      ) {
+        setError(
+          resultado.error ??
+            "No se pudo iniciar sesión.",
+        );
+        setCargando(false);
+        return;
+      }
+
+      window.location.replace(resultado.destino);
+    } catch (errorDesconocido) {
+      console.error(
+        "Error al conectar con el servidor:",
+        errorDesconocido,
+      );
+
+      setError(
+        errorDesconocido instanceof Error
+          ? errorDesconocido.message
+          : "Error al conectar con el servidor.",
+      );
+
       setCargando(false);
-      return;
     }
-
-    const { data: perfil, error: errorPerfil } = await supabase
-      .from("perfiles")
-      .select("rol")
-      .eq("id", data.user.id)
-      .single();
-
-    if (errorPerfil || !esRolUsuario(perfil?.rol)) {
-      await supabase.auth.signOut();
-      setError("Tu cuenta no tiene un perfil o rol válido. Contacta al administrador.");
-      setCargando(false);
-      return;
-    }
-
-    const solicitado = searchParams.get("redirect");
-    const destino =
-      solicitado && solicitado.startsWith("/") && perfil.rol !== "motorizado"
-        ? solicitado
-        : rutaInicialPorRol(perfil.rol);
-
-    router.replace(destino);
-    router.refresh();
   }
 
   return (
@@ -72,8 +87,10 @@ function LoginForm() {
             className="h-auto w-full max-w-sm object-contain"
             priority
           />
+
           <p className="mt-5 max-w-md text-sm leading-6 text-slate-400">
-            Plataforma administrativa para gestionar pedidos, clientes, motorizados, caja y reportes.
+            Plataforma administrativa para gestionar pedidos,
+            clientes, motorizados, caja y reportes.
           </p>
         </section>
 
@@ -83,32 +100,51 @@ function LoginForm() {
               <p className="text-xs font-bold uppercase tracking-[0.28em] text-green-400">
                 RapidControl
               </p>
-              <h1 className="mt-3 text-3xl font-black">Iniciar sesión</h1>
-              <p className="mt-2 text-slate-400">Acceso seguro al sistema de Mandados Rapid</p>
+
+              <h1 className="mt-3 text-3xl font-black">
+                Iniciar sesión
+              </h1>
+
+              <p className="mt-2 text-slate-400">
+                Acceso seguro al sistema de Mandados Rapid
+              </p>
             </div>
 
-            <form onSubmit={iniciarSesion} className="space-y-5">
+            <form
+              onSubmit={iniciarSesion}
+              className="space-y-5"
+            >
               <label className="block">
-                <span className="mb-2 block font-semibold">Correo</span>
+                <span className="mb-2 block font-semibold">
+                  Correo
+                </span>
+
                 <input
                   type="email"
                   autoComplete="email"
                   required
                   value={correo}
-                  onChange={(e) => setCorreo(e.target.value)}
+                  onChange={(evento) =>
+                    setCorreo(evento.target.value)
+                  }
                   placeholder="correo@empresa.com"
                   className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 outline-none transition focus:border-green-500 focus:ring-2 focus:ring-green-500/20"
                 />
               </label>
 
               <label className="block">
-                <span className="mb-2 block font-semibold">Contraseña</span>
+                <span className="mb-2 block font-semibold">
+                  Contraseña
+                </span>
+
                 <input
                   type="password"
                   autoComplete="current-password"
                   required
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(evento) =>
+                    setPassword(evento.target.value)
+                  }
                   placeholder="••••••••"
                   className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 outline-none transition focus:border-green-500 focus:ring-2 focus:ring-green-500/20"
                 />
@@ -128,7 +164,9 @@ function LoginForm() {
                 disabled={cargando}
                 className="w-full rounded-xl bg-green-600 py-3 font-bold transition hover:bg-green-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {cargando ? "Verificando..." : "Iniciar sesión"}
+                {cargando
+                  ? "Verificando..."
+                  : "Iniciar sesión"}
               </button>
 
               <Link
