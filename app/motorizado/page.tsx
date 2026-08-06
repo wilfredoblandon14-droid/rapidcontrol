@@ -67,6 +67,32 @@ type ResultadoCaja = {
   mensaje?: string;
 };
 
+type FondoDia = {
+  id: number;
+  motorizado_id: number;
+  monto: number;
+  fecha: string;
+  notas: string | null;
+};
+
+type GastoDia = {
+  id: number;
+  motorizado_id: number;
+  tipo: "Gasolina" | "Recarga" | "Otro";
+  monto: number;
+  fecha: string;
+  observacion: string | null;
+};
+
+type LiquidacionDia = {
+  id: number;
+  motorizado_id: number;
+  esperado: number;
+  recibido: number;
+  diferencia: number;
+  fecha: string;
+};
+
 function obtenerNombreMotorizado(
   motorizados: RelacionMotorizado
 ) {
@@ -142,6 +168,24 @@ function crearEnlaceRuta(origen: string, destino: string) {
   )}&destination=${encodeURIComponent(destino)}&travelmode=driving`;
 }
 
+function hoyLocal() {
+  const fecha = new Date();
+  const anio = fecha.getFullYear();
+  const mes = String(fecha.getMonth() + 1).padStart(2, "0");
+  const dia = String(fecha.getDate()).padStart(2, "0");
+  return `${anio}-${mes}-${dia}`;
+}
+
+function inicioDiaISO() {
+  const fecha = new Date();
+  fecha.setHours(0, 0, 0, 0);
+  return fecha.toISOString();
+}
+
+function esTransferencia(metodo: string | null | undefined) {
+  return (metodo ?? "").toLowerCase().includes("transfer");
+}
+
 function formatearDinero(
   valor: number | null | undefined
 ) {
@@ -197,6 +241,10 @@ export default function VistaMotorizado() {
   >([]);
 
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
+  const [pedidosDia, setPedidosDia] = useState<Pedido[]>([]);
+  const [fondosDia, setFondosDia] = useState<FondoDia[]>([]);
+  const [gastosDia, setGastosDia] = useState<GastoDia[]>([]);
+  const [liquidacionesDia, setLiquidacionesDia] = useState<LiquidacionDia[]>([]);
 
   const [
     motorizadoSeleccionado,
@@ -241,13 +289,40 @@ export default function VistaMotorizado() {
   }
 
   const motorizadoId = Number(perfil.motorizado_id);
-  const [respuestaMotorizado, respuestaPedidos, respuestaUbicacion] = await Promise.all([
+  const [
+    respuestaMotorizado,
+    respuestaPedidos,
+    respuestaPedidosDia,
+    respuestaFondos,
+    respuestaGastos,
+    respuestaLiquidaciones,
+    respuestaUbicacion,
+  ] = await Promise.all([
     supabase.from("motorizados").select("id, nombre, telefono, placa, estado").eq("id", motorizadoId).single(),
     supabase.from("pedidos").select(`
       id, nombre_cliente, telefono, direccion_recogida, direccion_entrega,
       costo_envio, monto_compra, estado, metodo_pago, descripcion,
       observaciones, created_at, motorizado_id, motorizados ( nombre )
     `).eq("motorizado_id", motorizadoId).in("estado", ["Pendiente", "Asignado", "Recogido", "En camino"]).order("created_at", { ascending: false }),
+    supabase.from("pedidos").select(`
+      id, nombre_cliente, telefono, direccion_recogida, direccion_entrega,
+      costo_envio, monto_compra, estado, metodo_pago, descripcion,
+      observaciones, created_at, motorizado_id, motorizados ( nombre )
+    `).eq("motorizado_id", motorizadoId).gte("created_at", inicioDiaISO()).order("created_at", { ascending: false }),
+    supabase.from("fondos_motorizado")
+      .select("id,motorizado_id,monto,fecha,notas")
+      .eq("motorizado_id", motorizadoId)
+      .eq("fecha", hoyLocal()),
+    supabase.from("gastos_motorizado")
+      .select("id,motorizado_id,tipo,monto,fecha,observacion")
+      .eq("motorizado_id", motorizadoId)
+      .eq("fecha", hoyLocal()),
+    supabase.from("liquidaciones_motorizado")
+      .select("id,motorizado_id,esperado,recibido,diferencia,fecha")
+      .eq("motorizado_id", motorizadoId)
+      .eq("fecha", hoyLocal())
+      .order("created_at", { ascending: false })
+      .limit(1),
     supabase
       .from("ubicaciones_motorizados")
       .select("motorizado_id, latitud, longitud, precision_metros, jornada_activa, inicio_jornada, fin_jornada, ultima_actualizacion")
@@ -260,14 +335,25 @@ export default function VistaMotorizado() {
     setCargando(false);
     return;
   }
-  if (respuestaPedidos.error) {
-    setError(`No se pudieron cargar tus pedidos: ${respuestaPedidos.error.message}`);
+  const errorFinanciero =
+    respuestaPedidos.error ??
+    respuestaPedidosDia.error ??
+    respuestaFondos.error ??
+    respuestaGastos.error ??
+    respuestaLiquidaciones.error;
+
+  if (errorFinanciero) {
+    setError(`No se pudo cargar tu jornada: ${errorFinanciero.message}`);
     setCargando(false);
     return;
   }
 
   setMotorizados([respuestaMotorizado.data as Motorizado]);
   setPedidos((respuestaPedidos.data ?? []) as Pedido[]);
+  setPedidosDia((respuestaPedidosDia.data ?? []) as Pedido[]);
+  setFondosDia((respuestaFondos.data ?? []) as FondoDia[]);
+  setGastosDia((respuestaGastos.data ?? []) as GastoDia[]);
+  setLiquidacionesDia((respuestaLiquidaciones.data ?? []) as LiquidacionDia[]);
   setMotorizadoSeleccionado(motorizadoId);
 
   if (!respuestaUbicacion.error && respuestaUbicacion.data) {
@@ -509,6 +595,112 @@ export default function VistaMotorizado() {
     };
   }, [pedidosFiltrados]);
 
+  const resumenFinanciero = useMemo(() => {
+    if (motorizadoSeleccionado === null) {
+      return {
+        fondo: 0,
+        comprasPagadas: 0,
+        cobradoEfectivo: 0,
+        transferencias: 0,
+        gananciaEnvios: 0,
+        gastos: 0,
+        gasolina: 0,
+        recargas: 0,
+        otros: 0,
+        efectivoActual: 0,
+        disponibleCompras: 0,
+        pedidosEntregados: 0,
+        liquidacion: null as LiquidacionDia | null,
+      };
+    }
+
+    const delMotorizado = pedidosDia.filter(
+      (pedido) => pedido.motorizado_id === motorizadoSeleccionado
+    );
+    const fondo = fondosDia
+      .filter((item) => item.motorizado_id === motorizadoSeleccionado)
+      .reduce((total, item) => total + Number(item.monto ?? 0), 0);
+    const gastosMotorizado = gastosDia.filter(
+      (item) => item.motorizado_id === motorizadoSeleccionado
+    );
+    const gastos = gastosMotorizado.reduce(
+      (total, item) => total + Number(item.monto ?? 0),
+      0
+    );
+    const gasolina = gastosMotorizado
+      .filter((item) => item.tipo === "Gasolina")
+      .reduce((total, item) => total + Number(item.monto ?? 0), 0);
+    const recargas = gastosMotorizado
+      .filter((item) => item.tipo === "Recarga")
+      .reduce((total, item) => total + Number(item.monto ?? 0), 0);
+    const otros = gastosMotorizado
+      .filter((item) => item.tipo === "Otro")
+      .reduce((total, item) => total + Number(item.monto ?? 0), 0);
+
+    const comprasPagadas = delMotorizado
+      .filter((pedido) =>
+        ["Recogido", "En camino", "Entregado"].includes(pedido.estado)
+      )
+      .reduce(
+        (total, pedido) => total + Number(pedido.monto_compra ?? 0),
+        0
+      );
+
+    const entregados = delMotorizado.filter(
+      (pedido) => pedido.estado === "Entregado"
+    );
+    const cobradoEfectivo = entregados
+      .filter((pedido) => !esTransferencia(pedido.metodo_pago))
+      .reduce(
+        (total, pedido) =>
+          total +
+          Number(pedido.monto_compra ?? 0) +
+          Number(pedido.costo_envio ?? 0),
+        0
+      );
+    const transferencias = entregados
+      .filter((pedido) => esTransferencia(pedido.metodo_pago))
+      .reduce(
+        (total, pedido) =>
+          total +
+          Number(pedido.monto_compra ?? 0) +
+          Number(pedido.costo_envio ?? 0),
+        0
+      );
+    const gananciaEnvios = entregados.reduce(
+      (total, pedido) => total + Number(pedido.costo_envio ?? 0),
+      0
+    );
+
+    const efectivoActual =
+      fondo - comprasPagadas + cobradoEfectivo - gastos;
+
+    return {
+      fondo,
+      comprasPagadas,
+      cobradoEfectivo,
+      transferencias,
+      gananciaEnvios,
+      gastos,
+      gasolina,
+      recargas,
+      otros,
+      efectivoActual,
+      disponibleCompras: Math.max(0, efectivoActual),
+      pedidosEntregados: entregados.length,
+      liquidacion:
+        liquidacionesDia.find(
+          (item) => item.motorizado_id === motorizadoSeleccionado
+        ) ?? null,
+    };
+  }, [
+    fondosDia,
+    gastosDia,
+    liquidacionesDia,
+    motorizadoSeleccionado,
+    pedidosDia,
+  ]);
+
   function seleccionarMotorizado(
     motorizadoId: number
   ) {
@@ -554,7 +746,7 @@ export default function VistaMotorizado() {
       .select("id")
       .eq("pedido_id", pedido.id)
       .eq("tipo", "Ingreso")
-      .eq("categoria", "Envío")
+      .in("categoria", ["Envío", "Envío efectivo", "Envío transferencia"])
       .maybeSingle();
 
     if (errorBusqueda) {
@@ -577,7 +769,9 @@ export default function VistaMotorizado() {
       .insert({
         pedido_id: pedido.id,
         tipo: "Ingreso",
-        categoria: "Envío",
+        categoria: esTransferencia(pedido.metodo_pago)
+          ? "Envío transferencia"
+          : "Envío efectivo",
         monto: montoEnvio,
         descripcion: `Ingreso por entrega del pedido #${pedido.id} - ${pedido.nombre_cliente}`,
       });
@@ -759,14 +953,18 @@ export default function VistaMotorizado() {
     <main className="min-h-screen bg-slate-950 p-4 text-white sm:p-6">
       <div className="mx-auto max-w-3xl">
         <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.25em] text-green-400">
-              RapidControl
-            </p>
-
-            <h1 className="mt-1 text-3xl font-black">
-              🛵 Mi jornada
-            </h1>
+          <div className="flex items-center gap-4">
+            <img
+              src="/logo-mandados-rapid.png"
+              alt="Mandados Rapid"
+              className="h-16 w-16 rounded-2xl border border-slate-800 bg-black object-contain p-1 shadow-xl"
+            />
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.25em] text-green-400">
+                Mandados Rapid
+              </p>
+              <h1 className="mt-1 text-3xl font-black">🛵 Mi jornada</h1>
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -944,6 +1142,123 @@ export default function VistaMotorizado() {
                     <p className="mt-2 text-3xl font-black text-green-300">
                       {formatearDinero(resumenJornada.totalEnvios)}
                     </p>
+                  </article>
+                </div>
+              </section>
+
+              <section className="mb-5 overflow-hidden rounded-2xl border border-green-500/30 bg-slate-900 shadow-2xl">
+                <div className="border-b border-slate-800 bg-gradient-to-r from-green-500/15 to-slate-900 p-5">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm font-bold uppercase tracking-[0.2em] text-green-400">
+                        Resumen financiero del día
+                      </p>
+                      <h2 className="mt-1 text-2xl font-black">💰 Mi dinero de jornada</h2>
+                    </div>
+                    <span className={`w-fit rounded-full px-4 py-2 text-sm font-black ${
+                      resumenFinanciero.liquidacion
+                        ? "bg-blue-500/15 text-blue-300"
+                        : resumenFinanciero.fondo > 0
+                          ? "bg-green-500/15 text-green-300"
+                          : "bg-amber-500/15 text-amber-300"
+                    }`}>
+                      {resumenFinanciero.liquidacion
+                        ? "Jornada liquidada"
+                        : resumenFinanciero.fondo > 0
+                          ? "Fondo recibido"
+                          : "Fondo pendiente"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 p-5 sm:grid-cols-2">
+                  <article className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-4">
+                    <p className="text-sm text-blue-200">Fondo recibido</p>
+                    <p className="mt-2 text-3xl font-black text-blue-300">
+                      {formatearDinero(resumenFinanciero.fondo)}
+                    </p>
+                  </article>
+
+                  <article className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">
+                    <p className="text-sm text-emerald-200">Cobrado en efectivo</p>
+                    <p className="mt-2 text-3xl font-black text-emerald-300">
+                      {formatearDinero(resumenFinanciero.cobradoEfectivo)}
+                    </p>
+                    <p className="mt-1 text-xs text-emerald-200/70">
+                      Compras y envíos recibidos físicamente
+                    </p>
+                  </article>
+
+                  <article className="rounded-xl border border-violet-500/30 bg-violet-500/10 p-4">
+                    <p className="text-sm text-violet-200">Transferencias</p>
+                    <p className="mt-2 text-3xl font-black text-violet-300">
+                      {formatearDinero(resumenFinanciero.transferencias)}
+                    </p>
+                    <p className="mt-1 text-xs text-violet-200/70">
+                      Pagadas directamente a la cuenta; no se entregan en efectivo
+                    </p>
+                  </article>
+
+                  <article className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+                    <p className="text-sm text-amber-200">Compras pagadas</p>
+                    <p className="mt-2 text-3xl font-black text-amber-300">
+                      -{formatearDinero(resumenFinanciero.comprasPagadas)}
+                    </p>
+                  </article>
+
+                  <article className="rounded-xl border border-red-500/30 bg-red-500/10 p-4">
+                    <p className="text-sm text-red-200">Gastos autorizados</p>
+                    <p className="mt-2 text-3xl font-black text-red-300">
+                      -{formatearDinero(resumenFinanciero.gastos)}
+                    </p>
+                    <p className="mt-1 text-xs text-red-200/70">
+                      Gasolina {formatearDinero(resumenFinanciero.gasolina)} · Recargas {formatearDinero(resumenFinanciero.recargas)} · Otros {formatearDinero(resumenFinanciero.otros)}
+                    </p>
+                  </article>
+
+                  <article className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4">
+                    <p className="text-sm text-cyan-200">Ganancia de envíos generada</p>
+                    <p className="mt-2 text-3xl font-black text-cyan-300">
+                      +{formatearDinero(resumenFinanciero.gananciaEnvios)}
+                    </p>
+                    <p className="mt-1 text-xs text-cyan-200/70">
+                      {resumenFinanciero.pedidosEntregados} pedidos entregados hoy
+                    </p>
+                  </article>
+                </div>
+
+                <div className="grid gap-4 border-t border-slate-800 p-5 lg:grid-cols-2">
+                  <article className={`rounded-2xl border p-5 ${
+                    resumenFinanciero.disponibleCompras < 300
+                      ? "border-red-500/40 bg-red-500/10"
+                      : "border-green-500/40 bg-green-500/10"
+                  }`}>
+                    <p className="text-sm text-slate-300">Disponible para continuar compras</p>
+                    <p className="mt-2 text-4xl font-black">
+                      {formatearDinero(resumenFinanciero.disponibleCompras)}
+                    </p>
+                    <p className="mt-2 text-sm text-slate-400">
+                      {resumenFinanciero.disponibleCompras < 300
+                        ? "⚠ Fondo bajo. Comunícate con recepción para una reposición."
+                        : "🟢 Tienes efectivo disponible para continuar la jornada."}
+                    </p>
+                  </article>
+
+                  <article className="rounded-2xl border border-green-400/50 bg-green-500/15 p-5">
+                    <p className="text-sm font-bold uppercase tracking-wider text-green-200">
+                      Efectivo estimado que debes entregar
+                    </p>
+                    <p className="mt-2 text-4xl font-black text-green-300">
+                      {formatearDinero(resumenFinanciero.efectivoActual)}
+                    </p>
+                    <p className="mt-2 text-xs leading-5 text-green-100/70">
+                      Fondo − compras pagadas + cobros en efectivo − gastos. Las transferencias quedan fuera de este monto.
+                    </p>
+                    {resumenFinanciero.liquidacion && (
+                      <p className="mt-3 rounded-xl bg-slate-950/40 p-3 text-sm text-slate-300">
+                        Recepción registró {formatearDinero(resumenFinanciero.liquidacion.recibido)} · Diferencia {formatearDinero(resumenFinanciero.liquidacion.diferencia)}
+                      </p>
+                    )}
                   </article>
                 </div>
               </section>
