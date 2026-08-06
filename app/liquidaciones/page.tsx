@@ -541,14 +541,53 @@ export default function LiquidacionesPage() {
                     <p className="text-slate-400">Fondos totales hoy</p>
                     <p className="mt-1 text-xl font-black">{dinero(d.fondoTotal)}</p>
                   </div>
+
                   <div className="rounded-xl bg-slate-800/70 p-4">
                     <p className="text-slate-400">Envíos totales hoy</p>
                     <p className="mt-1 text-xl font-black text-green-400">{dinero(d.enviosTotal)}</p>
                   </div>
+
+                  <div className="rounded-xl bg-slate-800/70 p-4">
+                    <p className="text-slate-400">Gasolina hoy</p>
+                    <p className="mt-1 text-xl font-black text-red-300">
+                      -{dinero(d.gasolinaTotal)}
+                    </p>
+                    <p
+                      className={`mt-1 text-xs font-bold ${
+                        d.gasolinaMes.length > config.max_gasolina_mes
+                          ? "text-red-400"
+                          : d.gasolinaMes.length === config.max_gasolina_mes
+                            ? "text-amber-300"
+                            : "text-slate-500"
+                      }`}
+                    >
+                      {d.gasolinaMes.length}/{config.max_gasolina_mes} este mes
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl bg-slate-800/70 p-4">
+                    <p className="text-slate-400">Recargas hoy</p>
+                    <p className="mt-1 text-xl font-black text-red-300">
+                      -{dinero(d.recargasTotal)}
+                    </p>
+                    <p
+                      className={`mt-1 text-xs font-bold ${
+                        d.recargasMes.length > config.max_recargas_mes
+                          ? "text-red-400"
+                          : d.recargasMes.length === config.max_recargas_mes
+                            ? "text-amber-300"
+                            : "text-slate-500"
+                      }`}
+                    >
+                      {d.recargasMes.length}/{config.max_recargas_mes} este mes
+                    </p>
+                  </div>
+
                   <div className="rounded-xl bg-slate-800/70 p-4">
                     <p className="text-slate-400">Liquidaciones hoy</p>
                     <p className="mt-1 text-xl font-black">{d.cantidadLiquidaciones}</p>
                   </div>
+
                   <div className="rounded-xl bg-slate-800/70 p-4">
                     <p className="text-slate-400">Recibido hoy</p>
                     <p className="mt-1 text-xl font-black text-blue-300">{dinero(d.recibidoHoy)}</p>
