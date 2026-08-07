@@ -33,6 +33,16 @@ type SesionCaja = {
   usuario_id: string | null;
 };
 
+type FondoMotorizadoCaja = {
+  sesion_caja_id: number | null;
+  monto: number;
+};
+
+type LiquidacionMotorizadoCaja = {
+  sesion_caja_id: number | null;
+  fondo_entregado: number;
+};
+
 const estiloCampo =
   "w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-white outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-500/20 disabled:cursor-not-allowed disabled:opacity-60";
 
@@ -57,9 +67,33 @@ function inicioDelDia(fecha = new Date()) {
   return copia;
 }
 
+function normalizarCategoria(categoria: string) {
+  return categoria.trim().toLowerCase();
+}
+
+function esFondoEntregado(movimiento: MovimientoCaja) {
+  const categoria = normalizarCategoria(movimiento.categoria);
+  return (
+    categoria.includes("fondo motorizado") ||
+    categoria.includes("fondo entregado a motorizado")
+  );
+}
+
+function esRetornoLiquidacion(movimiento: MovimientoCaja) {
+  const categoria = normalizarCategoria(movimiento.categoria);
+  return (
+    categoria.includes("liquidación motorizado") ||
+    categoria.includes("liquidacion motorizado") ||
+    categoria.includes("retorno de liquidación") ||
+    categoria.includes("retorno de liquidacion")
+  );
+}
+
 export default function Caja() {
   const [movimientos, setMovimientos] = useState<MovimientoCaja[]>([]);
   const [sesiones, setSesiones] = useState<SesionCaja[]>([]);
+  const [fondosMotorizados, setFondosMotorizados] = useState<FondoMotorizadoCaja[]>([]);
+  const [liquidacionesMotorizados, setLiquidacionesMotorizados] = useState<LiquidacionMotorizadoCaja[]>([]);
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [mostrarMovimiento, setMostrarMovimiento] = useState(false);
@@ -74,7 +108,12 @@ export default function Caja() {
     setCargando(true);
     setError("");
 
-    const [respuestaMovimientos, respuestaSesiones] = await Promise.all([
+    const [
+      respuestaMovimientos,
+      respuestaSesiones,
+      respuestaFondos,
+      respuestaLiquidaciones,
+    ] = await Promise.all([
       supabase
         .from("movimientos_caja")
         .select("id, pedido_id, tipo, categoria, monto, descripcion, created_at")
@@ -85,6 +124,12 @@ export default function Caja() {
           "id, estado, monto_inicial, efectivo_contado, saldo_esperado, diferencia, notas_apertura, notas_cierre, opened_at, closed_at, usuario_id"
         )
         .order("opened_at", { ascending: false }),
+      supabase
+        .from("fondos_motorizado")
+        .select("sesion_caja_id,monto"),
+      supabase
+        .from("liquidaciones_motorizado")
+        .select("sesion_caja_id,fondo_entregado"),
     ]);
 
     if (respuestaMovimientos.error) {
@@ -101,8 +146,22 @@ export default function Caja() {
       return;
     }
 
+    if (respuestaFondos.error || respuestaLiquidaciones.error) {
+      setError(
+        `No se pudo calcular el dinero en poder de motorizados: ${
+          respuestaFondos.error?.message ?? respuestaLiquidaciones.error?.message
+        }`
+      );
+      setCargando(false);
+      return;
+    }
+
     setMovimientos((respuestaMovimientos.data ?? []) as MovimientoCaja[]);
     setSesiones((respuestaSesiones.data ?? []) as SesionCaja[]);
+    setFondosMotorizados((respuestaFondos.data ?? []) as FondoMotorizadoCaja[]);
+    setLiquidacionesMotorizados(
+      (respuestaLiquidaciones.data ?? []) as LiquidacionMotorizadoCaja[]
+    );
     setCargando(false);
   }
 
@@ -124,21 +183,61 @@ export default function Caja() {
   }, [movimientos, sesionAbierta]);
 
   const resumenSesion = useMemo(() => {
-    const ingresos = movimientosSesion
+    const ingresosTotales = movimientosSesion
       .filter((movimiento) => movimiento.tipo === "Ingreso")
       .reduce((total, movimiento) => total + Number(movimiento.monto || 0), 0);
-    const egresos = movimientosSesion
+    const salidasTotales = movimientosSesion
       .filter((movimiento) => movimiento.tipo === "Egreso")
       .reduce((total, movimiento) => total + Number(movimiento.monto || 0), 0);
+
+    const fondosEntregados = fondosMotorizados
+      .filter((fondo) => fondo.sesion_caja_id === sesionAbierta?.id)
+      .reduce((total, fondo) => total + Number(fondo.monto || 0), 0);
+
+    const fondosDevueltos = liquidacionesMotorizados
+      .filter((liquidacion) => liquidacion.sesion_caja_id === sesionAbierta?.id)
+      .reduce(
+        (total, liquidacion) => total + Number(liquidacion.fondo_entregado || 0),
+        0
+      );
+
+    const fondosEnMotorizados = Math.max(0, fondosEntregados - fondosDevueltos);
+
+    const ingresosOperativos = movimientosSesion
+      .filter(
+        (movimiento) =>
+          movimiento.tipo === "Ingreso" && !esRetornoLiquidacion(movimiento)
+      )
+      .reduce((total, movimiento) => total + Number(movimiento.monto || 0), 0);
+
+    const gastosReales = movimientosSesion
+      .filter(
+        (movimiento) =>
+          movimiento.tipo === "Egreso" && !esFondoEntregado(movimiento)
+      )
+      .reduce((total, movimiento) => total + Number(movimiento.monto || 0), 0);
+
     const inicial = Number(sesionAbierta?.monto_inicial ?? 0);
+    const saldoEsperado = inicial + ingresosTotales - salidasTotales;
 
     return {
-      ingresos,
-      egresos,
-      saldoEsperado: inicial + ingresos - egresos,
+      ingresosTotales,
+      salidasTotales,
+      ingresosOperativos,
+      gastosReales,
+      fondosEntregados,
+      fondosDevueltos,
+      fondosEnMotorizados,
+      saldoEsperado,
+      totalBajoControl: saldoEsperado + fondosEnMotorizados,
       cantidad: movimientosSesion.length,
     };
-  }, [movimientosSesion, sesionAbierta]);
+  }, [
+    fondosMotorizados,
+    liquidacionesMotorizados,
+    movimientosSesion,
+    sesionAbierta,
+  ]);
 
   const resumenGeneral = useMemo(() => {
     const hoy = inicioDelDia().getTime();
@@ -477,16 +576,46 @@ export default function Caja() {
           </form>
         )}
 
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
             <p className="text-sm text-slate-400">Estado</p>
             <p className={`mt-2 text-2xl font-black ${sesionAbierta ? "text-green-400" : "text-slate-400"}`}>{sesionAbierta ? "ABIERTA" : "CERRADA"}</p>
             <p className="mt-2 text-xs text-slate-500">{sesionAbierta ? formatearFecha(sesionAbierta.opened_at) : "Sin sesión activa"}</p>
           </article>
-          <article className="rounded-2xl border border-blue-500/30 bg-blue-500/10 p-5"><p className="text-sm text-blue-300">Monto inicial</p><p className="mt-2 text-3xl font-black text-blue-400">{formatearDinero(Number(sesionAbierta?.monto_inicial ?? 0))}</p></article>
-          <article className="rounded-2xl border border-green-500/30 bg-green-500/10 p-5"><p className="text-sm text-green-300">Ingresos sesión</p><p className="mt-2 text-3xl font-black text-green-400">{formatearDinero(resumenSesion.ingresos)}</p></article>
-          <article className="rounded-2xl border border-red-500/30 bg-red-500/10 p-5"><p className="text-sm text-red-300">Egresos sesión</p><p className="mt-2 text-3xl font-black text-red-400">{formatearDinero(resumenSesion.egresos)}</p></article>
-          <article className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5"><p className="text-sm text-amber-300">Saldo esperado</p><p className="mt-2 text-3xl font-black text-amber-400">{formatearDinero(resumenSesion.saldoEsperado)}</p></article>
+          <article className="rounded-2xl border border-blue-500/30 bg-blue-500/10 p-5">
+            <p className="text-sm text-blue-300">Monto inicial</p>
+            <p className="mt-2 text-3xl font-black text-blue-400">{formatearDinero(Number(sesionAbierta?.monto_inicial ?? 0))}</p>
+          </article>
+          <article className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5">
+            <p className="text-sm text-amber-300">Disponible en Caja</p>
+            <p className="mt-2 text-3xl font-black text-amber-400">{formatearDinero(resumenSesion.saldoEsperado)}</p>
+            <p className="mt-2 text-xs text-amber-200/70">Efectivo esperado para el arqueo</p>
+          </article>
+          <article className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 p-5">
+            <p className="text-sm text-cyan-300">Fondos en motorizados</p>
+            <p className="mt-2 text-3xl font-black text-cyan-300">{formatearDinero(resumenSesion.fondosEnMotorizados)}</p>
+            <p className="mt-2 text-xs text-cyan-200/70">Dinero de la empresa fuera de la caja física</p>
+          </article>
+          <article className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5">
+            <p className="text-sm text-emerald-300">Total bajo control</p>
+            <p className="mt-2 text-3xl font-black text-emerald-300">{formatearDinero(resumenSesion.totalBajoControl)}</p>
+            <p className="mt-2 text-xs text-emerald-200/70">Caja disponible + fondos en motorizados</p>
+          </article>
+          <article className="rounded-2xl border border-green-500/30 bg-green-500/10 p-5">
+            <p className="text-sm text-green-300">Ingresos operativos</p>
+            <p className="mt-2 text-3xl font-black text-green-400">{formatearDinero(resumenSesion.ingresosOperativos)}</p>
+            <p className="mt-2 text-xs text-green-200/70">No incluye devoluciones de fondos</p>
+          </article>
+          <article className="rounded-2xl border border-red-500/30 bg-red-500/10 p-5">
+            <p className="text-sm text-red-300">Gastos reales</p>
+            <p className="mt-2 text-3xl font-black text-red-400">{formatearDinero(resumenSesion.gastosReales)}</p>
+            <p className="mt-2 text-xs text-red-200/70">No incluye fondos entregados</p>
+          </article>
+          <article className="rounded-2xl border border-violet-500/30 bg-violet-500/10 p-5">
+            <p className="text-sm text-violet-300">Fondos devueltos</p>
+            <p className="mt-2 text-3xl font-black text-violet-300">{formatearDinero(resumenSesion.fondosDevueltos)}</p>
+            <p className="mt-2 text-xs text-violet-200/70">Capital recuperado mediante liquidaciones</p>
+          </article>
         </section>
 
         <section className="grid gap-4 sm:grid-cols-3">

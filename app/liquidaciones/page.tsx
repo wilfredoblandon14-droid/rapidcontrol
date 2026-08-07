@@ -359,9 +359,9 @@ export default function LiquidacionesPage() {
 
     const { error: e2 } = await supabase.from("movimientos_caja").insert({
       tipo: "Egreso",
-      categoria: "Fondo motorizado",
+      categoria: "Fondo entregado a motorizado",
       monto,
-      descripcion: `Fondo entregado a ${actual.m.nombre}`,
+      descripcion: `Transferencia interna de Caja a ${actual.m.nombre}`,
     });
 
     if (e2) {
@@ -493,9 +493,9 @@ export default function LiquidacionesPage() {
 
     const { error: e2 } = await supabase.from("movimientos_caja").insert({
       tipo: "Ingreso",
-      categoria: "Liquidación motorizado",
+      categoria: "Retorno de liquidación motorizado",
       monto: recibido,
-      descripcion: `Liquidación #${liquidacionCreada.id} recibida de ${actual.m.nombre}. Diferencia: ${dinero(diferencia)}`,
+      descripcion: `Retorno de efectivo de la liquidación #${liquidacionCreada.id} de ${actual.m.nombre}. Diferencia: ${dinero(diferencia)}`,
     });
 
     if (e2) {
