@@ -654,8 +654,10 @@ export default function VistaMotorizado() {
       .reduce((total, item) => total + Number(item.monto ?? 0), 0);
 
     const comprasPagadas = delMotorizado
-      .filter((pedido) =>
-        ["Recogido", "En camino", "Entregado"].includes(pedido.estado)
+      .filter(
+        (pedido) =>
+          ["Recogido", "En camino", "Entregado"].includes(pedido.estado) &&
+          !esTransferencia(pedido.metodo_pago)
       )
       .reduce(
         (total, pedido) => total + Number(pedido.monto_compra ?? 0),
@@ -1222,7 +1224,7 @@ export default function VistaMotorizado() {
                   </article>
 
                   <article className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
-                    <p className="text-sm text-amber-200">Compras pagadas</p>
+                    <p className="text-sm text-amber-200">Compras pagadas en efectivo</p>
                     <p className="mt-2 text-3xl font-black text-amber-300">
                       -{formatearDinero(resumenFinanciero.comprasPagadas)}
                     </p>
