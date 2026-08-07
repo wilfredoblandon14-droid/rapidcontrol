@@ -62,6 +62,8 @@ type SesionCaja = { id: number; estado: string };
 type PedidoEntregado = {
   motorizado_id: number | null;
   costo_envio: number | null;
+  monto_compra: number | null;
+  metodo_pago: string | null;
 };
 
 const campo =
@@ -93,6 +95,10 @@ function dinero(valor: number) {
     style: "currency",
     currency: "NIO",
   }).format(valor || 0);
+}
+
+function esTransferencia(metodo: string | null | undefined) {
+  return (metodo ?? "").toLowerCase().includes("transfer");
 }
 
 export default function LiquidacionesPage() {
@@ -147,7 +153,7 @@ export default function LiquidacionesPage() {
         supabase.from("sesiones_caja").select("id,estado").eq("estado", "Abierta").maybeSingle(),
         supabase
           .from("pedidos")
-          .select("motorizado_id,costo_envio")
+          .select("motorizado_id,costo_envio,monto_compra,metodo_pago")
           .eq("estado", "Entregado")
           .gte("created_at", inicioDia()),
       ]);
@@ -214,9 +220,37 @@ export default function LiquidacionesPage() {
         const otrosTotal = gastosHoy
           .filter((g) => g.tipo === "Otro")
           .reduce((t, g) => t + Number(g.monto), 0);
-        const enviosTotal = pedidos
-          .filter((p) => p.motorizado_id === m.id)
-          .reduce((t, p) => t + Number(p.costo_envio ?? 0), 0);
+        const pedidosMotorizado = pedidos.filter((p) => p.motorizado_id === m.id);
+        const enviosTotal = pedidosMotorizado.reduce(
+          (t, p) => t + Number(p.costo_envio ?? 0),
+          0,
+        );
+        const comprasPagadasTotal = pedidosMotorizado.reduce(
+          (t, p) => t + Number(p.monto_compra ?? 0),
+          0,
+        );
+        const cobradoEfectivoTotal = pedidosMotorizado
+          .filter((p) => !esTransferencia(p.metodo_pago))
+          .reduce(
+            (t, p) =>
+              t +
+              Number(p.monto_compra ?? 0) +
+              Number(p.costo_envio ?? 0),
+            0,
+          );
+        const transferenciasTotal = pedidosMotorizado
+          .filter((p) => esTransferencia(p.metodo_pago))
+          .reduce(
+            (t, p) =>
+              t +
+              Number(p.monto_compra ?? 0) +
+              Number(p.costo_envio ?? 0),
+            0,
+          );
+
+        // Dinero físico generado por los pedidos. Las transferencias no se suman
+        // porque ese dinero no pasa por las manos del motorizado.
+        const efectivoPedidosTotal = cobradoEfectivoTotal - comprasPagadasTotal;
 
         const liquidacionesHoy = liquidaciones.filter(
           (l) => l.motorizado_id === m.id && l.fecha === fechaHoy,
@@ -235,16 +269,20 @@ export default function LiquidacionesPage() {
         );
 
         const fondoPendiente = Math.max(0, fondoTotal - yaLiquidado.fondo);
-        const enviosPendientes = Math.max(0, enviosTotal - yaLiquidado.envios);
+        const efectivoPedidosPendiente = efectivoPedidosTotal - yaLiquidado.envios;
         const gasolinaPendiente = Math.max(0, gasolinaTotal - yaLiquidado.gasolina);
         const recargasPendientes = Math.max(0, recargasTotal - yaLiquidado.recargas);
         const otrosPendientes = Math.max(0, otrosTotal - yaLiquidado.otros);
         const esperadoPendiente =
-          fondoPendiente + enviosPendientes - gasolinaPendiente - recargasPendientes - otrosPendientes;
+          fondoPendiente +
+          efectivoPedidosPendiente -
+          gasolinaPendiente -
+          recargasPendientes -
+          otrosPendientes;
 
         const tieneMovimientosPendientes =
           fondoPendiente > 0 ||
-          enviosPendientes > 0 ||
+          efectivoPedidosPendiente !== 0 ||
           gasolinaPendiente > 0 ||
           recargasPendientes > 0 ||
           otrosPendientes > 0;
@@ -259,11 +297,15 @@ export default function LiquidacionesPage() {
           recargasTotal,
           otrosTotal,
           enviosTotal,
+          comprasPagadasTotal,
+          cobradoEfectivoTotal,
+          transferenciasTotal,
+          efectivoPedidosTotal,
           liquidacionesHoy,
           cantidadLiquidaciones: liquidacionesHoy.length,
           recibidoHoy: yaLiquidado.recibido,
           fondoPendiente,
-          enviosPendientes,
+          efectivoPedidosPendiente,
           gasolinaPendiente,
           recargasPendientes,
           otrosPendientes,
@@ -427,7 +469,10 @@ export default function LiquidacionesPage() {
         sesion_caja_id: sesionCaja?.id ?? null,
         fecha: hoyLocal(),
         fondo_entregado: actual.fondoPendiente,
-        envios_generados: actual.enviosPendientes,
+        // Se conserva el nombre de la columna por compatibilidad, pero aquí se
+        // guarda el efectivo neto de pedidos del período: cobros en efectivo
+        // menos compras pagadas. Las transferencias quedan excluidas.
+        envios_generados: actual.efectivoPedidosPendiente,
         gasolina: actual.gasolinaPendiente,
         recargas: actual.recargasPendientes,
         otros_gastos: actual.otrosPendientes,
@@ -544,7 +589,31 @@ export default function LiquidacionesPage() {
 
                   <div className="rounded-xl bg-slate-800/70 p-4">
                     <p className="text-slate-400">Envíos totales hoy</p>
-                    <p className="mt-1 text-xl font-black text-green-400">{dinero(d.enviosTotal)}</p>
+                    <p className="mt-1 text-xl font-black text-cyan-300">{dinero(d.enviosTotal)}</p>
+                  </div>
+
+                  <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4">
+                    <p className="text-emerald-200">Cobrado en efectivo</p>
+                    <p className="mt-1 text-xl font-black text-emerald-300">
+                      +{dinero(d.cobradoEfectivoTotal)}
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl border border-violet-500/20 bg-violet-500/10 p-4">
+                    <p className="text-violet-200">Transferencias</p>
+                    <p className="mt-1 text-xl font-black text-violet-300">
+                      {dinero(d.transferenciasTotal)}
+                    </p>
+                    <p className="mt-1 text-xs text-violet-200/70">
+                      Informativo: no se suma al efectivo por entregar
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4">
+                    <p className="text-amber-200">Compras pagadas</p>
+                    <p className="mt-1 text-xl font-black text-amber-300">
+                      -{dinero(d.comprasPagadasTotal)}
+                    </p>
                   </div>
 
                   <div className="rounded-xl bg-slate-800/70 p-4">
@@ -598,7 +667,7 @@ export default function LiquidacionesPage() {
                   <p className="text-sm text-green-200">Debe entregar en la próxima liquidación</p>
                   <p className="mt-1 text-3xl font-black text-green-300">{dinero(d.esperadoPendiente)}</p>
                   <p className="mt-1 text-xs text-green-200/70">
-                    Solo incluye fondos, envíos y gastos posteriores a las liquidaciones anteriores.
+                    Fondo + cobros en efectivo − compras pagadas − gastos. Las transferencias no se suman porque no son efectivo del motorizado.
                   </p>
                 </div>
 
@@ -750,6 +819,14 @@ export default function LiquidacionesPage() {
                 <div className="rounded-xl bg-slate-800 p-4">
                   <p className="text-sm text-slate-400">Efectivo esperado de este período</p>
                   <p className="mt-1 text-3xl font-black text-green-400">{dinero(actual.esperadoPendiente)}</p>
+                  <div className="mt-3 space-y-1 text-xs text-slate-400">
+                    <p>Fondo pendiente: {dinero(actual.fondoPendiente)}</p>
+                    <p>Efectivo neto de pedidos: {dinero(actual.efectivoPedidosPendiente)}</p>
+                    <p>Gasolina pendiente: -{dinero(actual.gasolinaPendiente)}</p>
+                    <p>Recargas pendientes: -{dinero(actual.recargasPendientes)}</p>
+                    <p>Otros gastos pendientes: -{dinero(actual.otrosPendientes)}</p>
+                    <p className="pt-1 text-violet-300">Transferencias del día: {dinero(actual.transferenciasTotal)} (no se suman)</p>
+                  </div>
                 </div>
                 <label className="block">
                   <span className="mb-2 block font-semibold">Efectivo recibido</span>
