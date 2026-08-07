@@ -225,12 +225,13 @@ export default function LiquidacionesPage() {
           (t, p) => t + Number(p.costo_envio ?? 0),
           0,
         );
-        const comprasPagadasTotal = pedidosMotorizado
-          .filter((p) => !esTransferencia(p.metodo_pago))
-          .reduce(
-            (t, p) => t + Number(p.monto_compra ?? 0),
-            0,
-          );
+        // Toda compra sale del fondo del motorizado, incluso cuando el cliente
+        // paga el pedido por transferencia. En ese caso el motorizado no recupera
+        // ese dinero en efectivo, por lo que debe descontarse de la liquidación.
+        const comprasPagadasTotal = pedidosMotorizado.reduce(
+          (t, p) => t + Number(p.monto_compra ?? 0),
+          0,
+        );
         const cobradoEfectivoTotal = pedidosMotorizado
           .filter((p) => !esTransferencia(p.metodo_pago))
           .reduce(
@@ -612,7 +613,7 @@ export default function LiquidacionesPage() {
                   </div>
 
                   <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4">
-                    <p className="text-amber-200">Compras pagadas en efectivo</p>
+                    <p className="text-amber-200">Compras pagadas</p>
                     <p className="mt-1 text-xl font-black text-amber-300">
                       -{dinero(d.comprasPagadasTotal)}
                     </p>
@@ -669,7 +670,7 @@ export default function LiquidacionesPage() {
                   <p className="text-sm text-green-200">Debe entregar en la próxima liquidación</p>
                   <p className="mt-1 text-3xl font-black text-green-300">{dinero(d.esperadoPendiente)}</p>
                   <p className="mt-1 text-xs text-green-200/70">
-                    Fondo + cobros en efectivo − compras pagadas en efectivo − gastos. Las transferencias no se suman porque no son efectivo del motorizado.
+                    Fondo + cobros en efectivo − todas las compras pagadas − gastos. Las transferencias no se suman porque no son efectivo del motorizado.
                   </p>
                 </div>
 

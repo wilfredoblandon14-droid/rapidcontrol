@@ -655,11 +655,12 @@ export default function VistaMotorizado() {
       .filter((item) => item.tipo === "Otro")
       .reduce((total, item) => total + Number(item.monto ?? 0), 0);
 
+    // Toda compra pagada sale del fondo del motorizado. Si el cliente paga
+    // por transferencia, el motorizado no recibe ese dinero en efectivo y la
+    // compra debe seguir descontándose de su efectivo disponible.
     const comprasPagadas = delMotorizado
-      .filter(
-        (pedido) =>
-          ["Recogido", "En camino", "Entregado"].includes(pedido.estado) &&
-          !esTransferencia(pedido.metodo_pago)
+      .filter((pedido) =>
+        ["Recogido", "En camino", "Entregado"].includes(pedido.estado)
       )
       .reduce(
         (total, pedido) => total + Number(pedido.monto_compra ?? 0),
@@ -1276,7 +1277,7 @@ export default function VistaMotorizado() {
                   </article>
 
                   <article className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
-                    <p className="text-sm text-amber-200">Compras pagadas en efectivo</p>
+                    <p className="text-sm text-amber-200">Compras pagadas</p>
                     <p className="mt-2 text-3xl font-black text-amber-300">
                       -{formatearDinero(resumenFinanciero.comprasPagadas)}
                     </p>
@@ -1328,7 +1329,7 @@ export default function VistaMotorizado() {
                       {formatearDinero(resumenFinanciero.efectivoActual)}
                     </p>
                     <p className="mt-2 text-xs leading-5 text-green-100/70">
-                      Fondo − compras pagadas + cobros en efectivo − gastos. Las transferencias quedan fuera de este monto.
+                      Fondo − todas las compras pagadas + cobros en efectivo − gastos. Las transferencias quedan fuera de este monto.
                     </p>
                     {resumenFinanciero.liquidacion && (
                       <p className="mt-3 rounded-xl bg-slate-950/40 p-3 text-sm text-slate-300">
