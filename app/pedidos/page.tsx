@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
 
 type MotorizadoRelacionado = {
@@ -164,6 +164,8 @@ export default function ListaPedidos() {
   const [error, setError] = useState("");
   const [mensaje, setMensaje] = useState("");
   const [procesando, setProcesando] = useState<number | null>(null);
+  const [pedidoPagoEditando, setPedidoPagoEditando] = useState<Pedido | null>(null);
+  const [guardandoPago, setGuardandoPago] = useState(false);
 
   async function cargar() {
     setCargando(true);
@@ -222,6 +224,48 @@ export default function ListaPedidos() {
       }),
     [pedidos, busqueda, filtro]
   );
+
+  async function guardarDatosPago(evento: FormEvent<HTMLFormElement>) {
+    evento.preventDefault();
+    if (!pedidoPagoEditando) return;
+
+    const formulario = new FormData(evento.currentTarget);
+    const metodoPago = formulario.get("metodo_pago")?.toString() ?? "Por confirmar";
+    const costoEnvio = Number(formulario.get("costo_envio") ?? 0);
+    const montoCompra = Number(formulario.get("monto_compra") ?? 0);
+
+    if (metodoPago === "Por confirmar") {
+      setError("Selecciona Efectivo o Transferencia para confirmar el pago.");
+      return;
+    }
+    if (costoEnvio < 0 || montoCompra < 0) {
+      setError("Los montos no pueden ser negativos.");
+      return;
+    }
+
+    setGuardandoPago(true);
+    setError("");
+    const { error: errorPago } = await supabase
+      .from("pedidos")
+      .update({ metodo_pago: metodoPago, costo_envio: costoEnvio, monto_compra: montoCompra })
+      .eq("id", pedidoPagoEditando.id);
+
+    if (errorPago) {
+      setError(`No se pudo actualizar el pago: ${errorPago.message}`);
+      setGuardandoPago(false);
+      return;
+    }
+
+    setPedidos((actuales) => actuales.map((pedido) =>
+      pedido.id === pedidoPagoEditando.id
+        ? { ...pedido, metodo_pago: metodoPago, costo_envio: costoEnvio, monto_compra: montoCompra }
+        : pedido
+    ));
+    setPedidoPagoEditando(null);
+    setGuardandoPago(false);
+    setMensaje(`Datos financieros del pedido #${pedidoPagoEditando.id} actualizados.`);
+    window.setTimeout(() => setMensaje(""), 3000);
+  }
 
   async function cambiarEstado(pedido: Pedido, nuevoEstado: string) {
     setProcesando(pedido.id);
@@ -469,6 +513,16 @@ export default function ListaPedidos() {
                             <button onClick={() => enviarMotorizado(pedido)} className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-emerald-300">
                               Enviar a motorizado
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPedidoPagoEditando(pedido);
+                                setError("");
+                              }}
+                              className="rounded-lg border border-violet-500/40 bg-violet-500/10 px-3 py-2 text-violet-300"
+                            >
+                              💳 Actualizar pago
+                            </button>
                             <Link href={`/pedidos/${pedido.id}/editar`} className="rounded-lg border border-slate-700 px-3 py-2">
                               Editar
                             </Link>
@@ -486,6 +540,40 @@ export default function ListaPedidos() {
           )}
         </section>
       </div>
+
+      {pedidoPagoEditando && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm text-slate-400">Pedido #{pedidoPagoEditando.id}</p>
+                <h2 className="text-2xl font-black">Confirmar datos de pago</h2>
+              </div>
+              <button type="button" onClick={() => setPedidoPagoEditando(null)} className="rounded-lg px-3 py-2 text-slate-400 hover:bg-slate-800">✕</button>
+            </div>
+            <form onSubmit={guardarDatosPago} className="mt-5 space-y-4">
+              <label className="block space-y-2">
+                <span className="font-semibold">Método de pago</span>
+                <select name="metodo_pago" defaultValue={pedidoPagoEditando.metodo_pago || "Por confirmar"} className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3">
+                  <option value="Por confirmar">Por confirmar</option>
+                  <option value="Efectivo">Efectivo</option>
+                  <option value="Transferencia">Transferencia</option>
+                </select>
+              </label>
+              <label className="block space-y-2">
+                <span className="font-semibold">Monto del mandado / envío</span>
+                <input name="costo_envio" type="number" min="0" step="0.01" defaultValue={Number(pedidoPagoEditando.costo_envio ?? 0)} className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3" />
+              </label>
+              <label className="block space-y-2">
+                <span className="font-semibold">Monto gastado en la compra</span>
+                <input name="monto_compra" type="number" min="0" step="0.01" defaultValue={Number(pedidoPagoEditando.monto_compra ?? 0)} className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3" />
+              </label>
+              <p className="text-sm text-slate-400">Si el pago es transferencia, estos montos se mostrarán en reportes, pero no se sumarán al efectivo que debe entregar el motorizado.</p>
+              <button disabled={guardandoPago} className="w-full rounded-xl bg-violet-600 px-5 py-3 font-black disabled:opacity-50">{guardandoPago ? "Guardando..." : "Guardar datos de pago"}</button>
+            </form>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

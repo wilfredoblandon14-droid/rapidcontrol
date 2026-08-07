@@ -82,7 +82,7 @@ export default function NuevoPedido() {
   const [resultadoIA, setResultadoIA] = useState<ResultadoIA | null>(null);
   const [direccionRecogida, setDireccionRecogida] = useState("");
   const [observaciones, setObservaciones] = useState("");
-  const [metodoPago, setMetodoPago] = useState("Efectivo");
+  const [metodoPago, setMetodoPago] = useState("Por confirmar");
   const [tipoServicio, setTipoServicio] = useState("Solo envío");
 
   useEffect(() => {
@@ -405,7 +405,7 @@ export default function NuevoPedido() {
     setReferenciaEntrega("");
     setDireccionRecogida("");
     setObservaciones("");
-    setMetodoPago("Efectivo");
+    setMetodoPago("Por confirmar");
     setTipoServicio("Solo envío");
     setMensajeWhatsApp("");
     setResultadoIA(null);
@@ -564,6 +564,7 @@ export default function NuevoPedido() {
                 disabled={guardando}
                 className={estiloCampo}
               >
+                <option value="Por confirmar">Por confirmar</option>
                 <option value="Efectivo">Efectivo</option>
                 <option value="Transferencia">Transferencia</option>
                 <option value="Tarjeta">Tarjeta</option>

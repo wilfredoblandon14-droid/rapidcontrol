@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import NotificationsBell from "@/components/notifications/NotificationsBell";
 
@@ -263,6 +263,8 @@ export default function VistaMotorizado() {
 
   const [pedidoActualizando, setPedidoActualizando] =
     useState<number | null>(null);
+  const [pedidoConfirmandoPago, setPedidoConfirmandoPago] = useState<Pedido | null>(null);
+  const [guardandoPago, setGuardandoPago] = useState(false);
 
   const [jornadaActiva, setJornadaActiva] = useState(false);
   const [ubicacionActual, setUbicacionActual] =
@@ -814,11 +816,61 @@ export default function VistaMotorizado() {
     };
   }
 
+  async function confirmarPagoYEntregar(evento: FormEvent<HTMLFormElement>) {
+    evento.preventDefault();
+    if (!pedidoConfirmandoPago) return;
+
+    const formulario = new FormData(evento.currentTarget);
+    const metodoPago = formulario.get("metodo_pago")?.toString() ?? "Por confirmar";
+    const costoEnvio = Number(formulario.get("costo_envio") ?? 0);
+    const montoCompra = Number(formulario.get("monto_compra") ?? 0);
+
+    if (metodoPago !== "Efectivo" && metodoPago !== "Transferencia") {
+      setError("Confirma si el cliente pagó en efectivo o por transferencia.");
+      return;
+    }
+    if (costoEnvio < 0 || montoCompra < 0) {
+      setError("Los montos no pueden ser negativos.");
+      return;
+    }
+
+    setGuardandoPago(true);
+    setError("");
+    const pedidoActualizado: Pedido = {
+      ...pedidoConfirmandoPago,
+      metodo_pago: metodoPago,
+      costo_envio: costoEnvio,
+      monto_compra: montoCompra,
+    };
+
+    const { error: errorPago } = await supabase
+      .from("pedidos")
+      .update({ metodo_pago: metodoPago, costo_envio: costoEnvio, monto_compra: montoCompra })
+      .eq("id", pedidoConfirmandoPago.id);
+
+    if (errorPago) {
+      setError(`No se pudieron guardar los datos de pago: ${errorPago.message}`);
+      setGuardandoPago(false);
+      return;
+    }
+
+    setPedidos((actuales) => actuales.map((pedido) =>
+      pedido.id === pedidoActualizado.id ? pedidoActualizado : pedido
+    ));
+    setPedidosDia((actuales) => actuales.map((pedido) =>
+      pedido.id === pedidoActualizado.id ? pedidoActualizado : pedido
+    ));
+    setPedidoConfirmandoPago(null);
+    setGuardandoPago(false);
+    await actualizarEstado(pedidoActualizado.id, "Entregado", pedidoActualizado);
+  }
+
   async function actualizarEstado(
     pedidoId: number,
-    nuevoEstado: EstadoPedido
+    nuevoEstado: EstadoPedido,
+    pedidoConfirmado?: Pedido
   ) {
-    const pedidoAnterior = pedidos.find(
+    const pedidoAnterior = pedidoConfirmado ?? pedidos.find(
       (pedido) => pedido.id === pedidoId
     );
 
@@ -1620,12 +1672,10 @@ export default function VistaMotorizado() {
                                   disabled={
                                     estaActualizando
                                   }
-                                  onClick={() =>
-                                    void actualizarEstado(
-                                      pedido.id,
-                                      "Entregado"
-                                    )
-                                  }
+                                  onClick={() => {
+                                    setPedidoConfirmandoPago(pedido);
+                                    setError("");
+                                  }}
                                   className="rounded-xl bg-green-600 px-5 py-4 font-black transition hover:bg-green-500 disabled:cursor-wait disabled:opacity-60"
                                 >
                                   {estaActualizando
@@ -1651,6 +1701,40 @@ export default function VistaMotorizado() {
             </>
           )}
       </div>
+
+      {pedidoConfirmandoPago && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm text-slate-400">Pedido #{pedidoConfirmandoPago.id}</p>
+                <h2 className="text-2xl font-black">Confirmar pago y entrega</h2>
+              </div>
+              <button type="button" onClick={() => setPedidoConfirmandoPago(null)} className="rounded-lg px-3 py-2 text-slate-400 hover:bg-slate-800">✕</button>
+            </div>
+            <form onSubmit={confirmarPagoYEntregar} className="mt-5 space-y-4">
+              <label className="block space-y-2">
+                <span className="font-semibold">¿Cómo pagó el cliente?</span>
+                <select name="metodo_pago" defaultValue={pedidoConfirmandoPago.metodo_pago === "Transferencia" ? "Transferencia" : pedidoConfirmandoPago.metodo_pago === "Efectivo" ? "Efectivo" : "Por confirmar"} className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3">
+                  <option value="Por confirmar">Seleccionar...</option>
+                  <option value="Efectivo">Efectivo</option>
+                  <option value="Transferencia">Transferencia</option>
+                </select>
+              </label>
+              <label className="block space-y-2">
+                <span className="font-semibold">Monto del mandado / envío</span>
+                <input name="costo_envio" type="number" min="0" step="0.01" defaultValue={Number(pedidoConfirmandoPago.costo_envio ?? 0)} className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3" />
+              </label>
+              <label className="block space-y-2">
+                <span className="font-semibold">Monto gastado en la compra</span>
+                <input name="monto_compra" type="number" min="0" step="0.01" defaultValue={Number(pedidoConfirmandoPago.monto_compra ?? 0)} className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3" />
+              </label>
+              <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 p-3 text-sm text-violet-200">Si fue transferencia, el total no se contará como efectivo que debes entregar en la liquidación.</div>
+              <button disabled={guardandoPago || pedidoActualizando === pedidoConfirmandoPago.id} className="w-full rounded-xl bg-green-600 px-5 py-3 font-black disabled:opacity-50">{guardandoPago || pedidoActualizando === pedidoConfirmandoPago.id ? "Guardando..." : "Confirmar y marcar entregado"}</button>
+            </form>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
