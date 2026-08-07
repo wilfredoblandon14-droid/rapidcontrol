@@ -43,6 +43,15 @@ type LiquidacionMotorizadoCaja = {
   fondo_entregado: number;
 };
 
+type GastoMotorizadoCaja = {
+  id: number;
+  sesion_caja_id: number | null;
+  tipo: "Gasolina" | "Recarga" | "Otro";
+  monto: number;
+  fecha: string;
+  created_at: string;
+};
+
 const estiloCampo =
   "w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-white outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-500/20 disabled:cursor-not-allowed disabled:opacity-60";
 
@@ -94,6 +103,7 @@ export default function Caja() {
   const [sesiones, setSesiones] = useState<SesionCaja[]>([]);
   const [fondosMotorizados, setFondosMotorizados] = useState<FondoMotorizadoCaja[]>([]);
   const [liquidacionesMotorizados, setLiquidacionesMotorizados] = useState<LiquidacionMotorizadoCaja[]>([]);
+  const [gastosMotorizados, setGastosMotorizados] = useState<GastoMotorizadoCaja[]>([]);
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [mostrarMovimiento, setMostrarMovimiento] = useState(false);
@@ -113,6 +123,7 @@ export default function Caja() {
       respuestaSesiones,
       respuestaFondos,
       respuestaLiquidaciones,
+      respuestaGastosMotorizados,
     ] = await Promise.all([
       supabase
         .from("movimientos_caja")
@@ -130,6 +141,10 @@ export default function Caja() {
       supabase
         .from("liquidaciones_motorizado")
         .select("sesion_caja_id,fondo_entregado"),
+      supabase
+        .from("gastos_motorizado")
+        .select("id,sesion_caja_id,tipo,monto,fecha,created_at")
+        .order("created_at", { ascending: false }),
     ]);
 
     if (respuestaMovimientos.error) {
@@ -146,10 +161,12 @@ export default function Caja() {
       return;
     }
 
-    if (respuestaFondos.error || respuestaLiquidaciones.error) {
+    if (respuestaFondos.error || respuestaLiquidaciones.error || respuestaGastosMotorizados.error) {
       setError(
-        `No se pudo calcular el dinero en poder de motorizados: ${
-          respuestaFondos.error?.message ?? respuestaLiquidaciones.error?.message
+        `No se pudo calcular el dinero en poder de motorizados y sus gastos: ${
+          respuestaFondos.error?.message ??
+          respuestaLiquidaciones.error?.message ??
+          respuestaGastosMotorizados.error?.message
         }`
       );
       setCargando(false);
@@ -161,6 +178,9 @@ export default function Caja() {
     setFondosMotorizados((respuestaFondos.data ?? []) as FondoMotorizadoCaja[]);
     setLiquidacionesMotorizados(
       (respuestaLiquidaciones.data ?? []) as LiquidacionMotorizadoCaja[]
+    );
+    setGastosMotorizados(
+      (respuestaGastosMotorizados.data ?? []) as GastoMotorizadoCaja[]
     );
     setCargando(false);
   }
@@ -201,7 +221,26 @@ export default function Caja() {
         0
       );
 
-    const fondosEnMotorizados = Math.max(0, fondosEntregados - fondosDevueltos);
+    const gastosMotorizadosSesion = gastosMotorizados
+      .filter((gasto) => gasto.sesion_caja_id === sesionAbierta?.id)
+      .reduce((total, gasto) => total + Number(gasto.monto || 0), 0);
+
+    const gasolinaSesion = gastosMotorizados
+      .filter((gasto) => gasto.sesion_caja_id === sesionAbierta?.id && gasto.tipo === "Gasolina")
+      .reduce((total, gasto) => total + Number(gasto.monto || 0), 0);
+
+    const recargasSesion = gastosMotorizados
+      .filter((gasto) => gasto.sesion_caja_id === sesionAbierta?.id && gasto.tipo === "Recarga")
+      .reduce((total, gasto) => total + Number(gasto.monto || 0), 0);
+
+    const otrosGastosSesion = gastosMotorizados
+      .filter((gasto) => gasto.sesion_caja_id === sesionAbierta?.id && gasto.tipo === "Otro")
+      .reduce((total, gasto) => total + Number(gasto.monto || 0), 0);
+
+    const fondosEnMotorizados = Math.max(
+      0,
+      fondosEntregados - fondosDevueltos - gastosMotorizadosSesion
+    );
 
     const ingresosOperativos = movimientosSesion
       .filter(
@@ -210,12 +249,14 @@ export default function Caja() {
       )
       .reduce((total, movimiento) => total + Number(movimiento.monto || 0), 0);
 
-    const gastosReales = movimientosSesion
+    const egresosManualesReales = movimientosSesion
       .filter(
         (movimiento) =>
           movimiento.tipo === "Egreso" && !esFondoEntregado(movimiento)
       )
       .reduce((total, movimiento) => total + Number(movimiento.monto || 0), 0);
+
+    const gastosReales = egresosManualesReales + gastosMotorizadosSesion;
 
     const inicial = Number(sesionAbierta?.monto_inicial ?? 0);
     const saldoEsperado = inicial + ingresosTotales - salidasTotales;
@@ -228,12 +269,17 @@ export default function Caja() {
       fondosEntregados,
       fondosDevueltos,
       fondosEnMotorizados,
+      gastosMotorizadosSesion,
+      gasolinaSesion,
+      recargasSesion,
+      otrosGastosSesion,
       saldoEsperado,
       totalBajoControl: saldoEsperado + fondosEnMotorizados,
       cantidad: movimientosSesion.length,
     };
   }, [
     fondosMotorizados,
+    gastosMotorizados,
     liquidacionesMotorizados,
     movimientosSesion,
     sesionAbierta,
@@ -254,20 +300,41 @@ export default function Caja() {
       .reduce((total, movimiento) => total + Number(movimiento.monto || 0), 0);
 
     // Los fondos entregados a motorizados son transferencias internas, no egresos reales.
-    const egresosHoy = movimientosHoy
+    const egresosManualesHoy = movimientosHoy
       .filter(
         (movimiento) =>
           movimiento.tipo === "Egreso" && !esFondoEntregado(movimiento)
       )
       .reduce((total, movimiento) => total + Number(movimiento.monto || 0), 0);
 
+    const gastosMotorizadosHoy = gastosMotorizados
+      .filter((gasto) => new Date(gasto.created_at).getTime() >= hoy)
+      .reduce((total, gasto) => total + Number(gasto.monto || 0), 0);
+
+    const gasolinaHoy = gastosMotorizados
+      .filter((gasto) => gasto.tipo === "Gasolina" && new Date(gasto.created_at).getTime() >= hoy)
+      .reduce((total, gasto) => total + Number(gasto.monto || 0), 0);
+
+    const recargasHoy = gastosMotorizados
+      .filter((gasto) => gasto.tipo === "Recarga" && new Date(gasto.created_at).getTime() >= hoy)
+      .reduce((total, gasto) => total + Number(gasto.monto || 0), 0);
+
+    const otrosGastosHoy = gastosMotorizados
+      .filter((gasto) => gasto.tipo === "Otro" && new Date(gasto.created_at).getTime() >= hoy)
+      .reduce((total, gasto) => total + Number(gasto.monto || 0), 0);
+
+    const egresosHoy = egresosManualesHoy + gastosMotorizadosHoy;
+
     return {
       ingresosHoy,
       egresosHoy,
+      gasolinaHoy,
+      recargasHoy,
+      otrosGastosHoy,
       balanceHoy: ingresosHoy - egresosHoy,
       movimientosHoy: movimientosHoy.length,
     };
-  }, [movimientos]);
+  }, [gastosMotorizados, movimientos]);
 
   const movimientosFiltrados = useMemo(() => {
     const texto = busqueda.trim().toLowerCase();
@@ -621,6 +688,18 @@ export default function Caja() {
             <p className="mt-2 text-3xl font-black text-red-400">{formatearDinero(resumenSesion.gastosReales)}</p>
             <p className="mt-2 text-xs text-red-200/70">No incluye fondos entregados</p>
           </article>
+          <article className="rounded-2xl border border-orange-500/30 bg-orange-500/10 p-5">
+            <p className="text-sm text-orange-300">Detalle de gastos de motorizados</p>
+            <p className="mt-2 text-sm font-bold text-orange-200">
+              Gasolina: {formatearDinero(resumenSesion.gasolinaSesion)}
+            </p>
+            <p className="mt-1 text-sm font-bold text-orange-200">
+              Recargas: {formatearDinero(resumenSesion.recargasSesion)}
+            </p>
+            <p className="mt-1 text-sm font-bold text-orange-200">
+              Otros: {formatearDinero(resumenSesion.otrosGastosSesion)}
+            </p>
+          </article>
           <article className="rounded-2xl border border-violet-500/30 bg-violet-500/10 p-5">
             <p className="text-sm text-violet-300">Fondos devueltos</p>
             <p className="mt-2 text-3xl font-black text-violet-300">{formatearDinero(resumenSesion.fondosDevueltos)}</p>
@@ -628,9 +707,15 @@ export default function Caja() {
           </article>
         </section>
 
-        <section className="grid gap-4 sm:grid-cols-3">
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><p className="text-sm text-slate-400">Ingresos operativos hoy</p><p className="mt-2 text-2xl font-black text-green-400">{formatearDinero(resumenGeneral.ingresosHoy)}</p></article>
           <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><p className="text-sm text-slate-400">Gastos reales hoy</p><p className="mt-2 text-2xl font-black text-red-400">{formatearDinero(resumenGeneral.egresosHoy)}</p></article>
+          <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+            <p className="text-sm text-slate-400">Detalle de gastos hoy</p>
+            <p className="mt-2 text-sm text-slate-300">Gasolina: <strong>{formatearDinero(resumenGeneral.gasolinaHoy)}</strong></p>
+            <p className="mt-1 text-sm text-slate-300">Recargas: <strong>{formatearDinero(resumenGeneral.recargasHoy)}</strong></p>
+            <p className="mt-1 text-sm text-slate-300">Otros: <strong>{formatearDinero(resumenGeneral.otrosGastosHoy)}</strong></p>
+          </article>
           <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><p className="text-sm text-slate-400">Balance operativo hoy</p><p className="mt-2 text-2xl font-black text-amber-400">{formatearDinero(resumenGeneral.balanceHoy)}</p></article>
         </section>
 
