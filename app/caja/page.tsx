@@ -244,11 +244,21 @@ export default function Caja() {
     const movimientosHoy = movimientos.filter(
       (movimiento) => new Date(movimiento.created_at).getTime() >= hoy
     );
+
+    // Las devoluciones de liquidaciones son retornos de capital, no ingresos operativos.
     const ingresosHoy = movimientosHoy
-      .filter((movimiento) => movimiento.tipo === "Ingreso")
+      .filter(
+        (movimiento) =>
+          movimiento.tipo === "Ingreso" && !esRetornoLiquidacion(movimiento)
+      )
       .reduce((total, movimiento) => total + Number(movimiento.monto || 0), 0);
+
+    // Los fondos entregados a motorizados son transferencias internas, no egresos reales.
     const egresosHoy = movimientosHoy
-      .filter((movimiento) => movimiento.tipo === "Egreso")
+      .filter(
+        (movimiento) =>
+          movimiento.tipo === "Egreso" && !esFondoEntregado(movimiento)
+      )
       .reduce((total, movimiento) => total + Number(movimiento.monto || 0), 0);
 
     return {
@@ -619,9 +629,9 @@ export default function Caja() {
         </section>
 
         <section className="grid gap-4 sm:grid-cols-3">
-          <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><p className="text-sm text-slate-400">Ingresos de hoy</p><p className="mt-2 text-2xl font-black text-green-400">{formatearDinero(resumenGeneral.ingresosHoy)}</p></article>
-          <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><p className="text-sm text-slate-400">Egresos de hoy</p><p className="mt-2 text-2xl font-black text-red-400">{formatearDinero(resumenGeneral.egresosHoy)}</p></article>
-          <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><p className="text-sm text-slate-400">Balance de hoy</p><p className="mt-2 text-2xl font-black text-amber-400">{formatearDinero(resumenGeneral.balanceHoy)}</p></article>
+          <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><p className="text-sm text-slate-400">Ingresos operativos hoy</p><p className="mt-2 text-2xl font-black text-green-400">{formatearDinero(resumenGeneral.ingresosHoy)}</p></article>
+          <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><p className="text-sm text-slate-400">Gastos reales hoy</p><p className="mt-2 text-2xl font-black text-red-400">{formatearDinero(resumenGeneral.egresosHoy)}</p></article>
+          <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><p className="text-sm text-slate-400">Balance operativo hoy</p><p className="mt-2 text-2xl font-black text-amber-400">{formatearDinero(resumenGeneral.balanceHoy)}</p></article>
         </section>
 
         <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
