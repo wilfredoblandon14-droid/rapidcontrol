@@ -52,6 +52,15 @@ type GastoMotorizadoCaja = {
   created_at: string;
 };
 
+type PedidoTransferenciaCaja = {
+  id: number;
+  metodo_pago: string | null;
+  costo_envio: number | null;
+  monto_compra: number | null;
+  estado: string | null;
+  created_at: string;
+};
+
 const estiloCampo =
   "w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-white outline-none transition placeholder:text-slate-400 focus:border-green-500 focus:ring-2 focus:ring-green-500/20 disabled:cursor-not-allowed disabled:opacity-60";
 
@@ -98,12 +107,21 @@ function esRetornoLiquidacion(movimiento: MovimientoCaja) {
   );
 }
 
+function esTransferencia(metodo: string | null | undefined) {
+  return (metodo ?? "").trim().toLowerCase().includes("transfer");
+}
+
+function esPedidoEntregado(estado: string | null | undefined) {
+  return (estado ?? "").trim().toLowerCase() === "entregado";
+}
+
 export default function Caja() {
   const [movimientos, setMovimientos] = useState<MovimientoCaja[]>([]);
   const [sesiones, setSesiones] = useState<SesionCaja[]>([]);
   const [fondosMotorizados, setFondosMotorizados] = useState<FondoMotorizadoCaja[]>([]);
   const [liquidacionesMotorizados, setLiquidacionesMotorizados] = useState<LiquidacionMotorizadoCaja[]>([]);
   const [gastosMotorizados, setGastosMotorizados] = useState<GastoMotorizadoCaja[]>([]);
+  const [pedidosTransferencia, setPedidosTransferencia] = useState<PedidoTransferenciaCaja[]>([]);
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [mostrarMovimiento, setMostrarMovimiento] = useState(false);
@@ -124,6 +142,7 @@ export default function Caja() {
       respuestaFondos,
       respuestaLiquidaciones,
       respuestaGastosMotorizados,
+      respuestaPedidosTransferencia,
     ] = await Promise.all([
       supabase
         .from("movimientos_caja")
@@ -144,6 +163,10 @@ export default function Caja() {
       supabase
         .from("gastos_motorizado")
         .select("id,sesion_caja_id,tipo,monto,fecha,created_at")
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("pedidos")
+        .select("id,metodo_pago,costo_envio,monto_compra,estado,created_at")
         .order("created_at", { ascending: false }),
     ]);
 
@@ -173,6 +196,14 @@ export default function Caja() {
       return;
     }
 
+    if (respuestaPedidosTransferencia.error) {
+      setError(
+        `No se pudieron calcular las transferencias de los pedidos: ${respuestaPedidosTransferencia.error.message}`
+      );
+      setCargando(false);
+      return;
+    }
+
     setMovimientos((respuestaMovimientos.data ?? []) as MovimientoCaja[]);
     setSesiones((respuestaSesiones.data ?? []) as SesionCaja[]);
     setFondosMotorizados((respuestaFondos.data ?? []) as FondoMotorizadoCaja[]);
@@ -181,6 +212,9 @@ export default function Caja() {
     );
     setGastosMotorizados(
       (respuestaGastosMotorizados.data ?? []) as GastoMotorizadoCaja[]
+    );
+    setPedidosTransferencia(
+      (respuestaPedidosTransferencia.data ?? []) as PedidoTransferenciaCaja[]
     );
     setCargando(false);
   }
@@ -335,6 +369,72 @@ export default function Caja() {
       movimientosHoy: movimientosHoy.length,
     };
   }, [gastosMotorizados, movimientos]);
+
+  const resumenTransferenciasSesion = useMemo(() => {
+    if (!sesionAbierta) {
+      return {
+        recibido: 0,
+        compras: 0,
+        envios: 0,
+        neto: 0,
+        cantidad: 0,
+      };
+    }
+
+    const apertura = new Date(sesionAbierta.opened_at).getTime();
+    const transferencias = pedidosTransferencia.filter(
+      (pedido) =>
+        esPedidoEntregado(pedido.estado) &&
+        esTransferencia(pedido.metodo_pago) &&
+        new Date(pedido.created_at).getTime() >= apertura
+    );
+
+    const compras = transferencias.reduce(
+      (total, pedido) => total + Number(pedido.monto_compra ?? 0),
+      0
+    );
+    const envios = transferencias.reduce(
+      (total, pedido) => total + Number(pedido.costo_envio ?? 0),
+      0
+    );
+    const recibido = compras + envios;
+
+    return {
+      recibido,
+      compras,
+      envios,
+      neto: recibido - compras,
+      cantidad: transferencias.length,
+    };
+  }, [pedidosTransferencia, sesionAbierta]);
+
+  const resumenTransferenciasHoy = useMemo(() => {
+    const hoy = inicioDelDia().getTime();
+    const transferencias = pedidosTransferencia.filter(
+      (pedido) =>
+        esPedidoEntregado(pedido.estado) &&
+        esTransferencia(pedido.metodo_pago) &&
+        new Date(pedido.created_at).getTime() >= hoy
+    );
+
+    const compras = transferencias.reduce(
+      (total, pedido) => total + Number(pedido.monto_compra ?? 0),
+      0
+    );
+    const envios = transferencias.reduce(
+      (total, pedido) => total + Number(pedido.costo_envio ?? 0),
+      0
+    );
+    const recibido = compras + envios;
+
+    return {
+      recibido,
+      compras,
+      envios,
+      neto: recibido - compras,
+      cantidad: transferencias.length,
+    };
+  }, [pedidosTransferencia]);
 
   const movimientosFiltrados = useMemo(() => {
     const texto = busqueda.trim().toLowerCase();
@@ -707,6 +807,42 @@ export default function Caja() {
           </article>
         </section>
 
+        <section className="rounded-2xl border border-violet-500/30 bg-violet-500/5 p-5">
+          <div className="mb-5">
+            <h2 className="text-xl font-black text-violet-200">🏦 Bancos / Transferencias</h2>
+            <p className="mt-1 text-sm text-violet-200/70">
+              Pedidos entregados y pagados por transferencia desde la apertura de la caja. Este dinero no forma parte del efectivo disponible para el arqueo.
+            </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+            <article className="rounded-2xl border border-violet-500/30 bg-slate-950/40 p-5">
+              <p className="text-sm text-violet-300">Transferencias recibidas</p>
+              <p className="mt-2 text-2xl font-black text-violet-200">{formatearDinero(resumenTransferenciasSesion.recibido)}</p>
+              <p className="mt-2 text-xs text-slate-400">Compra + costo de envío cobrados al cliente</p>
+            </article>
+            <article className="rounded-2xl border border-amber-500/30 bg-slate-950/40 p-5">
+              <p className="text-sm text-amber-300">Compras asociadas</p>
+              <p className="mt-2 text-2xl font-black text-amber-300">-{formatearDinero(resumenTransferenciasSesion.compras)}</p>
+              <p className="mt-2 text-xs text-slate-400">Dinero de la compra financiado con fondos de la empresa</p>
+            </article>
+            <article className="rounded-2xl border border-emerald-500/30 bg-slate-950/40 p-5">
+              <p className="text-sm text-emerald-300">Ingresos por envíos</p>
+              <p className="mt-2 text-2xl font-black text-emerald-300">{formatearDinero(resumenTransferenciasSesion.envios)}</p>
+              <p className="mt-2 text-xs text-slate-400">Costo de envío de pedidos por transferencia</p>
+            </article>
+            <article className="rounded-2xl border border-cyan-500/30 bg-slate-950/40 p-5">
+              <p className="text-sm text-cyan-300">Neto bancario operativo</p>
+              <p className="mt-2 text-2xl font-black text-cyan-300">{formatearDinero(resumenTransferenciasSesion.neto)}</p>
+              <p className="mt-2 text-xs text-slate-400">Transferencias recibidas − compras asociadas</p>
+            </article>
+            <article className="rounded-2xl border border-slate-700 bg-slate-950/40 p-5">
+              <p className="text-sm text-slate-300">Pedidos por transferencia</p>
+              <p className="mt-2 text-2xl font-black text-white">{resumenTransferenciasSesion.cantidad}</p>
+              <p className="mt-2 text-xs text-slate-400">Solo pedidos en estado Entregado</p>
+            </article>
+          </div>
+        </section>
+
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><p className="text-sm text-slate-400">Ingresos operativos hoy</p><p className="mt-2 text-2xl font-black text-green-400">{formatearDinero(resumenGeneral.ingresosHoy)}</p></article>
           <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><p className="text-sm text-slate-400">Gastos reales hoy</p><p className="mt-2 text-2xl font-black text-red-400">{formatearDinero(resumenGeneral.egresosHoy)}</p></article>
@@ -717,6 +853,26 @@ export default function Caja() {
             <p className="mt-1 text-sm text-slate-300">Otros: <strong>{formatearDinero(resumenGeneral.otrosGastosHoy)}</strong></p>
           </article>
           <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><p className="text-sm text-slate-400">Balance operativo hoy</p><p className="mt-2 text-2xl font-black text-amber-400">{formatearDinero(resumenGeneral.balanceHoy)}</p></article>
+        </section>
+
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <article className="rounded-2xl border border-violet-500/20 bg-slate-900 p-5">
+            <p className="text-sm text-slate-400">Transferencias recibidas hoy</p>
+            <p className="mt-2 text-2xl font-black text-violet-300">{formatearDinero(resumenTransferenciasHoy.recibido)}</p>
+          </article>
+          <article className="rounded-2xl border border-amber-500/20 bg-slate-900 p-5">
+            <p className="text-sm text-slate-400">Compras por transferencia hoy</p>
+            <p className="mt-2 text-2xl font-black text-amber-300">-{formatearDinero(resumenTransferenciasHoy.compras)}</p>
+          </article>
+          <article className="rounded-2xl border border-emerald-500/20 bg-slate-900 p-5">
+            <p className="text-sm text-slate-400">Envíos por transferencia hoy</p>
+            <p className="mt-2 text-2xl font-black text-emerald-300">{formatearDinero(resumenTransferenciasHoy.envios)}</p>
+          </article>
+          <article className="rounded-2xl border border-cyan-500/20 bg-slate-900 p-5">
+            <p className="text-sm text-slate-400">Neto bancario hoy</p>
+            <p className="mt-2 text-2xl font-black text-cyan-300">{formatearDinero(resumenTransferenciasHoy.neto)}</p>
+            <p className="mt-1 text-xs text-slate-500">{resumenTransferenciasHoy.cantidad} pedido(s) entregado(s)</p>
+          </article>
         </section>
 
         <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">

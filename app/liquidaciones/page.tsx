@@ -655,6 +655,16 @@ export default function LiquidacionesPage() {
                     </p>
                   </div>
 
+                  <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-4">
+                    <p className="text-rose-200">Otros gastos hoy</p>
+                    <p className="mt-1 text-xl font-black text-rose-300">
+                      -{dinero(d.otrosTotal)}
+                    </p>
+                    <p className="mt-1 text-xs text-rose-200/70">
+                      Gastos autorizados distintos de gasolina y recargas
+                    </p>
+                  </div>
+
                   <div className="rounded-xl bg-slate-800/70 p-4">
                     <p className="text-slate-400">Liquidaciones hoy</p>
                     <p className="mt-1 text-xl font-black">{d.cantidadLiquidaciones}</p>
