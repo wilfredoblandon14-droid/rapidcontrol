@@ -58,6 +58,7 @@ type PedidoTransferenciaCaja = {
   costo_envio: number | null;
   monto_compra: number | null;
   estado: string | null;
+  fecha_operativa: string | null;
   created_at: string;
 };
 
@@ -109,6 +110,17 @@ function esRetornoLiquidacion(movimiento: MovimientoCaja) {
 
 function esTransferencia(metodo: string | null | undefined) {
   return (metodo ?? "").trim().toLowerCase().includes("transfer");
+}
+
+function esEfectivo(metodo: string | null | undefined) {
+  return (metodo ?? "").trim().toLowerCase().includes("efectivo");
+}
+
+function fechaOperativaLocal(fecha = new Date()) {
+  const anio = fecha.getFullYear();
+  const mes = String(fecha.getMonth() + 1).padStart(2, "0");
+  const dia = String(fecha.getDate()).padStart(2, "0");
+  return `${anio}-${mes}-${dia}`;
 }
 
 function esPedidoEntregado(estado: string | null | undefined) {
@@ -166,7 +178,7 @@ export default function Caja() {
         .order("created_at", { ascending: false }),
       supabase
         .from("pedidos")
-        .select("id,metodo_pago,costo_envio,monto_compra,estado,created_at")
+        .select("id,metodo_pago,costo_envio,monto_compra,estado,fecha_operativa,created_at")
         .order("created_at", { ascending: false }),
     ]);
 
@@ -409,12 +421,12 @@ export default function Caja() {
   }, [pedidosTransferencia, sesionAbierta]);
 
   const resumenTransferenciasHoy = useMemo(() => {
-    const hoy = inicioDelDia().getTime();
+    const fechaHoy = fechaOperativaLocal();
     const transferencias = pedidosTransferencia.filter(
       (pedido) =>
         esPedidoEntregado(pedido.estado) &&
         esTransferencia(pedido.metodo_pago) &&
-        new Date(pedido.created_at).getTime() >= hoy
+        pedido.fecha_operativa === fechaHoy
     );
 
     const compras = transferencias.reduce(
@@ -435,6 +447,49 @@ export default function Caja() {
       cantidad: transferencias.length,
     };
   }, [pedidosTransferencia]);
+
+  const resumenVentasHoy = useMemo(() => {
+    const fechaHoy = fechaOperativaLocal();
+    const pedidosEntregadosHoy = pedidosTransferencia.filter(
+      (pedido) => esPedidoEntregado(pedido.estado) && pedido.fecha_operativa === fechaHoy
+    );
+
+    const efectivo = pedidosEntregadosHoy.filter((pedido) => esEfectivo(pedido.metodo_pago));
+    const transferencias = pedidosEntregadosHoy.filter((pedido) =>
+      esTransferencia(pedido.metodo_pago)
+    );
+
+    const sumarCompras = (pedidos: PedidoTransferenciaCaja[]) =>
+      pedidos.reduce((total, pedido) => total + Number(pedido.monto_compra ?? 0), 0);
+    const sumarEnvios = (pedidos: PedidoTransferenciaCaja[]) =>
+      pedidos.reduce((total, pedido) => total + Number(pedido.costo_envio ?? 0), 0);
+
+    const comprasEfectivo = sumarCompras(efectivo);
+    const enviosEfectivo = sumarEnvios(efectivo);
+    const comprasTransferencia = sumarCompras(transferencias);
+    const enviosTransferencia = sumarEnvios(transferencias);
+    const comprasTotales = sumarCompras(pedidosEntregadosHoy);
+    const enviosTotales = sumarEnvios(pedidosEntregadosHoy);
+    const cobradoEfectivo = comprasEfectivo + enviosEfectivo;
+    const cobradoTransferencia = comprasTransferencia + enviosTransferencia;
+    const totalCobrado = comprasTotales + enviosTotales;
+
+    return {
+      cantidadPedidos: pedidosEntregadosHoy.length,
+      pedidosEfectivo: efectivo.length,
+      pedidosTransferencia: transferencias.length,
+      cobradoEfectivo,
+      cobradoTransferencia,
+      totalCobrado,
+      comprasEfectivo,
+      comprasTransferencia,
+      comprasTotales,
+      enviosEfectivo,
+      enviosTransferencia,
+      enviosTotales,
+      resultadoOperativo: enviosTotales - resumenGeneral.egresosHoy,
+    };
+  }, [pedidosTransferencia, resumenGeneral.egresosHoy]);
 
   const movimientosFiltrados = useMemo(() => {
     const texto = busqueda.trim().toLowerCase();
@@ -853,6 +908,60 @@ export default function Caja() {
             <p className="mt-1 text-sm text-slate-300">Otros: <strong>{formatearDinero(resumenGeneral.otrosGastosHoy)}</strong></p>
           </article>
           <article className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><p className="text-sm text-slate-400">Balance operativo hoy</p><p className="mt-2 text-2xl font-black text-amber-400">{formatearDinero(resumenGeneral.balanceHoy)}</p></article>
+        </section>
+
+        <section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-5">
+          <div className="mb-5">
+            <h2 className="text-xl font-black text-emerald-200">📊 Resumen financiero del día</h2>
+            <p className="mt-1 text-sm text-emerald-100/70">
+              Vista administrativa de pedidos entregados según su fecha operativa. Separa efectivo y transferencias para no mezclar caja física con banco.
+            </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <article className="rounded-2xl border border-green-500/30 bg-slate-950/40 p-5">
+              <p className="text-sm text-green-300">Cobrado en efectivo</p>
+              <p className="mt-2 text-2xl font-black text-green-300">{formatearDinero(resumenVentasHoy.cobradoEfectivo)}</p>
+              <p className="mt-2 text-xs text-slate-400">Compras + envíos cobrados en efectivo · {resumenVentasHoy.pedidosEfectivo} pedido(s)</p>
+            </article>
+            <article className="rounded-2xl border border-violet-500/30 bg-slate-950/40 p-5">
+              <p className="text-sm text-violet-300">Cobrado por transferencia</p>
+              <p className="mt-2 text-2xl font-black text-violet-300">{formatearDinero(resumenVentasHoy.cobradoTransferencia)}</p>
+              <p className="mt-2 text-xs text-slate-400">Compras + envíos recibidos en banco · {resumenVentasHoy.pedidosTransferencia} pedido(s)</p>
+            </article>
+            <article className="rounded-2xl border border-blue-500/30 bg-slate-950/40 p-5">
+              <p className="text-sm text-blue-300">Total cobrado en pedidos</p>
+              <p className="mt-2 text-2xl font-black text-blue-300">{formatearDinero(resumenVentasHoy.totalCobrado)}</p>
+              <p className="mt-2 text-xs text-slate-400">Efectivo + transferencias · {resumenVentasHoy.cantidadPedidos} pedido(s) entregado(s)</p>
+            </article>
+            <article className="rounded-2xl border border-cyan-500/30 bg-slate-950/40 p-5">
+              <p className="text-sm text-cyan-300">Ingresos por envíos</p>
+              <p className="mt-2 text-2xl font-black text-cyan-300">{formatearDinero(resumenVentasHoy.enviosTotales)}</p>
+              <p className="mt-2 text-xs text-slate-400">Efectivo {formatearDinero(resumenVentasHoy.enviosEfectivo)} · Transferencia {formatearDinero(resumenVentasHoy.enviosTransferencia)}</p>
+            </article>
+            <article className="rounded-2xl border border-amber-500/30 bg-slate-950/40 p-5">
+              <p className="text-sm text-amber-300">Compras de clientes</p>
+              <p className="mt-2 text-2xl font-black text-amber-300">{formatearDinero(resumenVentasHoy.comprasTotales)}</p>
+              <p className="mt-2 text-xs text-slate-400">Efectivo {formatearDinero(resumenVentasHoy.comprasEfectivo)} · Transferencia {formatearDinero(resumenVentasHoy.comprasTransferencia)}</p>
+            </article>
+            <article className="rounded-2xl border border-red-500/30 bg-slate-950/40 p-5">
+              <p className="text-sm text-red-300">Gastos operativos registrados</p>
+              <p className="mt-2 text-2xl font-black text-red-300">-{formatearDinero(resumenGeneral.egresosHoy)}</p>
+              <p className="mt-2 text-xs text-slate-400">Gasolina, recargas, otros gastos y egresos manuales reales</p>
+            </article>
+            <article className="rounded-2xl border border-emerald-500/30 bg-slate-950/40 p-5">
+              <p className="text-sm text-emerald-300">Resultado operativo del día</p>
+              <p className={`mt-2 text-2xl font-black ${resumenVentasHoy.resultadoOperativo >= 0 ? "text-emerald-300" : "text-red-300"}`}>
+                {formatearDinero(resumenVentasHoy.resultadoOperativo)}
+              </p>
+              <p className="mt-2 text-xs text-slate-400">Ingresos por envíos − gastos operativos registrados. No equivale a utilidad contable final.</p>
+            </article>
+            <article className="rounded-2xl border border-slate-700 bg-slate-950/40 p-5">
+              <p className="text-sm text-slate-300">Distribución de cobros</p>
+              <p className="mt-2 text-sm font-bold text-green-300">Efectivo: {formatearDinero(resumenVentasHoy.cobradoEfectivo)}</p>
+              <p className="mt-1 text-sm font-bold text-violet-300">Transferencia: {formatearDinero(resumenVentasHoy.cobradoTransferencia)}</p>
+              <p className="mt-2 text-xs text-slate-400">Permite conciliar caja física y movimientos bancarios por separado.</p>
+            </article>
+          </div>
         </section>
 
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
